@@ -4,6 +4,7 @@ const KEYS = {
   EXPENSES: '@antigravity_expenses',
   BUDGETS: '@antigravity_budgets',
   SPLITS: '@antigravity_splits',
+  GROUPS: '@antigravity_groups',
   RECURRING: '@antigravity_recurring',
 };
 
@@ -141,6 +142,40 @@ export const deleteSplit = async (id) => {
   let list = await getSplits();
   list = list.filter((s) => s.id !== id);
   await save(KEYS.SPLITS, list);
+};
+
+// ─────────────────────────────────────────────────────────────────
+//  GROUPS
+// ─────────────────────────────────────────────────────────────────
+export const getGroups = () => load(KEYS.GROUPS);
+
+export const addGroup = async (group) => {
+  const list = await getGroups();
+  const entry = {
+    id: uid(),
+    name: group.name || 'New Group',
+    members: group.members || [], // { name, phone, balance }
+    expenses: [], // { title, amount, payerPhone, date }
+    date: new Date().toISOString(),
+  };
+  list.unshift(entry);
+  await save(KEYS.GROUPS, list);
+  return entry;
+};
+
+export const updateGroup = async (id, updates) => {
+  const list = await getGroups();
+  const idx = list.findIndex((g) => g.id === id);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], ...updates };
+    await save(KEYS.GROUPS, list);
+  }
+};
+
+export const deleteGroup = async (id) => {
+  let list = await getGroups();
+  list = list.filter((g) => g.id !== id);
+  await save(KEYS.GROUPS, list);
 };
 
 // ─────────────────────────────────────────────────────────────────

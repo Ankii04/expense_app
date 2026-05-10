@@ -17,6 +17,10 @@ import {
   addRecurring as storeAddRecurring,
   updateRecurring as storeUpdateRecurring,
   deleteRecurring as storeDelRecurring,
+  getGroups,
+  addGroup as storeAddGroup,
+  updateGroup as storeUpdateGroup,
+  deleteGroup as storeDelGroup,
 } from '../store/expenseStore';
 import { getMonthKey } from '../utils/theme';
 
@@ -75,6 +79,49 @@ export function useExpenses() {
     addExpense,
     deleteExpense,
   };
+}
+
+export function useGroups() {
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const g = await getGroups();
+    setGroups(g);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const addGroup = useCallback(
+    async (group) => {
+      const entry = await storeAddGroup(group);
+      await refresh();
+      return entry;
+    },
+    [refresh],
+  );
+
+  const updateGroup = useCallback(
+    async (id, updates) => {
+      await storeUpdateGroup(id, updates);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const deleteGroup = useCallback(
+    async (id) => {
+      await storeDelGroup(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  return { groups, loading, refresh, addGroup, updateGroup, deleteGroup };
 }
 
 export function useBudgets() {

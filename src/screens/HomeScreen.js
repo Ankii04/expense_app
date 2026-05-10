@@ -6,20 +6,24 @@ import {
   StyleSheet,
   RefreshControl,
   Dimensions,
+  TextInput,
+  TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import Svg, { Rect, Text as SvgText } from 'react-native-svg';
+import Svg, { Rect, Text as SvgText, G, Path } from 'react-native-svg';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS, CATEGORIES, formatCurrency, getCategoryById } from '../utils/theme';
 import { useExpenses } from '../hooks/useExpenses';
 import ExpenseCard from '../components/ExpenseCard';
 
 const SCREEN_W = Dimensions.get('window').width;
-const CHART_W = SCREEN_W - 40;
+const CHART_W = SCREEN_W - (SPACING.xl * 2) - (SPACING.lg * 2) - 4; // Screen padding + Card padding
 const CHART_H = 180;
 const BAR_GAP = 6;
 
 export default function HomeScreen({ navigation }) {
-  const { expenses, monthTotal, categorySpend, loading, refresh } = useExpenses();
+  const { expenses, monthTotal, categorySpend, loading, refresh, addExpense } = useExpenses();
+  const [quickText, setQuickText] = React.useState('');
 
   // Refresh data when screen is focused
   useFocusEffect(
@@ -27,6 +31,41 @@ export default function HomeScreen({ navigation }) {
       refresh();
     }, [refresh]),
   );
+
+  const handleQuickAdd = async () => {
+    if (!quickText.trim()) return;
+
+    // NLP Parsing Logic
+    // Matches "Amount for Note" or "Amount on Category"
+    const amountMatch = quickText.match(/(\d+)/);
+    if (!amountMatch) {
+      Alert.alert('Try again', 'Include an amount, e.g., "500 for pizza"');
+      return;
+    }
+
+    const amount = Number(amountMatch[1]);
+    let note = quickText.replace(amountMatch[1], '').replace(/for|on|at/g, '').trim();
+    if (!note) note = 'Quick Entry';
+
+    // Guess category from note
+    let category = 'other';
+    const noteLower = note.toLowerCase();
+    if (noteLower.includes('food') || noteLower.includes('pizza') || noteLower.includes('lunch') || noteLower.includes('dinner')) category = 'food';
+    else if (noteLower.includes('uber') || noteLower.includes('petrol') || noteLower.includes('fuel') || noteLower.includes('cab')) category = 'transport';
+    else if (noteLower.includes('shopping') || noteLower.includes('clothes')) category = 'shopping';
+    else if (noteLower.includes('bill') || noteLower.includes('recharge')) category = 'bills';
+
+    await addExpense({
+      amount,
+      note,
+      category,
+      payeeName: note,
+      date: new Date().toISOString()
+    });
+
+    setQuickText('');
+    Alert.alert('Success', `Added ${formatCurrency(amount)} to ${category}`);
+  };
 
   const recentExpenses = expenses.slice(0, 5);
 
@@ -66,64 +105,116 @@ export default function HomeScreen({ navigation }) {
         <Text style={styles.totalSub}>{expenses.length} transactions this month</Text>
       </View>
 
+      {/* ─── NLP Quick Add ───────────────────────── */}
+      <View style={styles.quickAddContainer}>
+        <TextInput
+          style={styles.quickInput}
+          placeholder='Quick Add: "500 for coffee"'
+          placeholderTextColor={COLORS.textMuted}
+          value={quickText}
+          onChangeText={setQuickText}
+        />
+        <TouchableOpacity 
+          style={[styles.quickBtn, !quickText.trim() && { opacity: 0.5 }]} 
+          onPress={handleQuickAdd}
+          disabled={!quickText.trim()}
+        >
+          <Text style={styles.quickBtnText}>Add</Text>
+        </TouchableOpacity>
+      </View>
+
       {/* ─── Category Breakdown Chart ─────────────── */}
       {chartData.length > 0 && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Spend by Category</Text>
           <View style={styles.chartCard}>
-            <Svg width={CHART_W} height={CHART_H}>
-              {chartData.map((cat, i) => {
-                const barW = Math.max(
-                  (CHART_W - chartData.length * BAR_GAP) / chartData.length,
-                  20,
-                );
-                const barH = (cat.amount / maxAmount) * (CHART_H - 40);
-                const x = i * (barW + BAR_GAP);
-                const y = CHART_H - 24 - barH;
+            <View style={styles.chartRow}>
+              <View style={styles.pieContainer}>
+                <Svg width={140} height={140}>
+                  <G transform="translate(0, 0)">
+                    {(() => {
+                      let cumulativeAngle = 0;
+                      const RADIUS = 70;
+                      const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
+                        const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+                        return {
+                          x: centerX + radius * Math.cos(angleInRadians),
+                          y: centerY + radius * Math.sin(angleInRadians),
+                        };
+                      };
+                      const describeArc = (x, y, radius, startAngle, endAngle) => {
+                        const start = polarToCartesian(x, y, radius, endAngle);
+                        const end = polarToCartesian(x, y, radius, startAngle);
+                        const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+                        return [
+                          'M', x, y,
+                          'L', start.x, start.y,
+                          'A', radius, radius, 0, largeArcFlag, 0, end.x, end.y,
+                          'L', x, y,
+                        ].join(' ');
+                      };
 
-                return (
-                  <React.Fragment key={cat.id}>
-                    {/* Bar background */}
-                    <Rect
-                      x={x}
-                      y={CHART_H - 24 - (CHART_H - 40)}
-                      width={barW}
-                      height={CHART_H - 40}
-                      rx={6}
-                      fill={COLORS.border}
+                      return chartData.map((cat, i) => {
+                        const percentage = cat.amount / monthTotal;
+                        const angle = percentage * 360;
+                        const startAngle = cumulativeAngle;
+                        cumulativeAngle += angle;
+                        return (
+                          <Path
+                            key={i}
+                            d={describeArc(RADIUS, RADIUS, RADIUS, startAngle, startAngle + angle)}
+                            fill={cat.color}
+                          />
+                        );
+                      });
+                    })()}
+                    {/* Inner hole for donut */}
+                    <Path
+                      d={(() => {
+                        const RADIUS = 70;
+                        const polarToCartesian = (centerX, centerY, radius, angleInDegrees) => {
+                          const angleInRadians = ((angleInDegrees - 90) * Math.PI) / 180.0;
+                          return {
+                            x: centerX + radius * Math.cos(angleInRadians),
+                            y: centerY + radius * Math.sin(angleInRadians),
+                          };
+                        };
+                        const describeArc = (x, y, radius, startAngle, endAngle) => {
+                          const start = polarToCartesian(x, y, radius, endAngle);
+                          const end = polarToCartesian(x, y, radius, startAngle);
+                          const largeArcFlag = endAngle - startAngle <= 180 ? '0' : '1';
+                          return [
+                            'M', x, y,
+                            'L', start.x, start.y,
+                            'A', radius, radius, 0, largeArcFlag, 0, end.x, end.y,
+                            'L', x, y,
+                          ].join(' ');
+                        };
+                        return describeArc(RADIUS, RADIUS, RADIUS * 0.65, 0, 359.9);
+                      })()}
+                      fill={COLORS.card}
                     />
-                    {/* Bar value */}
-                    <Rect
-                      x={x}
-                      y={y}
-                      width={barW}
-                      height={barH}
-                      rx={6}
-                      fill={cat.color}
-                      opacity={0.85}
-                    />
-                    {/* Emoji label */}
-                    <SvgText
-                      x={x + barW / 2}
-                      y={CHART_H - 6}
-                      fontSize={12}
-                      fill={COLORS.textSecondary}
-                      textAnchor="middle"
-                    >
-                      {cat.emoji}
-                    </SvgText>
-                  </React.Fragment>
-                );
-              })}
-            </Svg>
-            {/* Legend */}
-            <View style={styles.legendRow}>
-              {chartData.map((cat) => (
-                <View key={cat.id} style={styles.legendItem}>
-                  <View style={[styles.legendDot, { backgroundColor: cat.color }]} />
-                  <Text style={styles.legendText}>{formatCurrency(cat.amount)}</Text>
+                  </G>
+                </Svg>
+                <View style={styles.chartCenter}>
+                   <Text style={styles.chartCenterEmoji}>📊</Text>
                 </View>
-              ))}
+              </View>
+
+              <View style={styles.legendCol}>
+                {chartData.slice(0, 4).map((cat) => (
+                  <View key={cat.id} style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: cat.color }]} />
+                    <View>
+                      <Text style={styles.legendName}>{cat.name}</Text>
+                      <Text style={styles.legendAmount}>{formatCurrency(cat.amount)}</Text>
+                    </View>
+                  </View>
+                ))}
+                {chartData.length > 4 && (
+                   <Text style={styles.moreText}>+ {chartData.length - 4} more</Text>
+                )}
+              </View>
             </View>
           </View>
         </View>
@@ -270,7 +361,6 @@ const styles = StyleSheet.create({
     marginBottom: SPACING.md,
   },
 
-  // Chart
   chartCard: {
     backgroundColor: COLORS.card,
     borderRadius: BORDER_RADIUS.xl,
@@ -278,27 +368,55 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
   },
-  legendRow: {
+  chartRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: SPACING.md,
-    gap: SPACING.md,
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  pieContainer: {
+    width: 140,
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chartCenter: {
+    position: 'absolute',
+  },
+  chartCenterEmoji: {
+    fontSize: 24,
+  },
+  legendCol: {
+    flex: 1,
+    marginLeft: 20,
+    gap: 12,
   },
   legendItem: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   legendDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    marginRight: 6,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    marginRight: 10,
   },
-  legendText: {
+  legendName: {
     color: COLORS.textSecondary,
     fontSize: FONT_SIZE.xs,
+    fontWeight: '600',
   },
-
+  legendAmount: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.sm,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  moreText: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZE.xs,
+    fontWeight: '600',
+    marginTop: 4,
+  },
   // Empty
   emptyCard: {
     backgroundColor: COLORS.card,
@@ -322,5 +440,33 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZE.sm,
     marginTop: SPACING.xs,
     textAlign: 'center',
+  },
+  quickAddContainer: {
+    flexDirection: 'row',
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    padding: 8,
+    marginBottom: SPACING.xxl,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+  },
+  quickInput: {
+    flex: 1,
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.md,
+    paddingHorizontal: 12,
+    height: 44,
+  },
+  quickBtn: {
+    backgroundColor: COLORS.accent,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: BORDER_RADIUS.md,
+  },
+  quickBtnText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: FONT_SIZE.sm,
   },
 });

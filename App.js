@@ -3,7 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer, DefaultTheme } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, Platform } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import HomeScreen from './src/screens/HomeScreen';
 import ScanScreen from './src/screens/ScanScreen';
@@ -12,6 +13,8 @@ import ExpensesScreen from './src/screens/ExpensesScreen';
 import BudgetScreen from './src/screens/BudgetScreen';
 import SplitScreen from './src/screens/SplitScreen';
 import RecurringScreen from './src/screens/RecurringScreen';
+import AnalyticsScreen from './src/screens/AnalyticsScreen';
+import GroupsScreen from './src/screens/GroupsScreen';
 
 const COLORS = {
   background: '#0A0A0F',
@@ -75,9 +78,18 @@ function MoreScreen({ navigation }) {
         </Text>
       </View>
 
+      <View style={styles.moreBtn}>
+        <Text
+          style={styles.moreBtnText}
+          onPress={() => navigation.navigate('Groups')}
+        >
+          🏘️  Group Expenses
+        </Text>
+      </View>
+
       <View style={[styles.moreBtn, { marginTop: 24 }]}>
         <Text style={[styles.moreBtnText, { color: COLORS.textMuted }]}>
-          ⚡  Antigravity v1.0
+          ⚡  Antigravity v1.1
         </Text>
       </View>
     </View>
@@ -90,17 +102,19 @@ function MoreStack() {
       <Stack.Screen name="MoreHome" component={MoreScreen} />
       <Stack.Screen name="Split" component={SplitScreen} />
       <Stack.Screen name="Recurring" component={RecurringScreen} />
+      <Stack.Screen name="Groups" component={GroupsScreen} />
     </Stack.Navigator>
   );
 }
 
 // ─── Main Stack (wraps tabs + Pay screen) ────────────────────
 function TabNavigator() {
+  const insets = useSafeAreaInsets();
   return (
     <Tab.Navigator
       screenOptions={{
         headerShown: false,
-        tabBarStyle: styles.tabBar,
+        tabBarStyle: [styles.tabBar, { height: 60 + insets.bottom, paddingBottom: insets.bottom || 8 }],
         tabBarShowLabel: false,
         tabBarHideOnKeyboard: true,
       }}
@@ -127,6 +141,13 @@ function TabNavigator() {
         }}
       />
       <Tab.Screen
+        name="AnalyticsTab"
+        component={AnalyticsScreen}
+        options={{
+          tabBarIcon: ({ focused }) => <TabIcon emoji="📈" label="Stats" focused={focused} />,
+        }}
+      />
+      <Tab.Screen
         name="BudgetTab"
         component={BudgetScreen}
         options={{
@@ -146,22 +167,24 @@ function TabNavigator() {
 
 export default function App() {
   return (
-    <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-      <NavigationContainer theme={AppTheme}>
-        <StatusBar style="light" />
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="Main" component={TabNavigator} />
-          <Stack.Screen
-            name="Pay"
-            component={PayScreen}
-            options={{
-              presentation: 'modal',
-              gestureEnabled: true,
-            }}
-          />
-        </Stack.Navigator>
-      </NavigationContainer>
-    </View>
+    <SafeAreaProvider>
+      <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+        <NavigationContainer theme={AppTheme}>
+          <StatusBar style="light" />
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="Main" component={TabNavigator} />
+            <Stack.Screen
+              name="Pay"
+              component={PayScreen}
+              options={{
+                presentation: 'modal',
+                gestureEnabled: true,
+              }}
+            />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </View>
+    </SafeAreaProvider>
   );
 }
 
@@ -170,9 +193,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.card,
     borderTopWidth: 1,
     borderTopColor: COLORS.border,
-    height: 80,
-    paddingBottom: 16,
-    paddingTop: 8,
+    paddingTop: 12,
     position: 'absolute',
     bottom: 0,
     left: 0,

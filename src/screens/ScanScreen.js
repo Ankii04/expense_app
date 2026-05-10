@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as ImagePicker from 'expo-image-picker';
+import { BarCodeScanner } from 'expo-barcode-scanner';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../utils/theme';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -36,7 +38,35 @@ export default function ScanScreen({ navigation }) {
     if (parsed && parsed.upiId) {
       navigation.navigate('Pay', parsed);
     } else {
+      Alert.alert('Invalid QR', 'This is not a valid UPI QR code.');
       setTimeout(() => setScanned(false), 2000);
+    }
+  };
+
+  const handleGalleryScan = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'We need gallery access to pick QR codes.');
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+    });
+
+    if (!result.canceled && result.assets && result.assets[0].uri) {
+      const results = await BarCodeScanner.scanFromURLAsync(result.assets[0].uri);
+      if (results.length > 0) {
+        const parsed = parseUPIData(results[0].data);
+        if (parsed && parsed.upiId) {
+          navigation.navigate('Pay', parsed);
+        } else {
+          Alert.alert('Invalid QR', 'No valid UPI data found in this image.');
+        }
+      } else {
+        Alert.alert('Scan Failed', 'Could not detect a QR code in this image.');
+      }
     }
   };
 
@@ -81,9 +111,14 @@ export default function ScanScreen({ navigation }) {
           <View style={styles.overlayFill} />
         </View>
         <View style={[styles.overlaySection, { paddingBottom: 100 }]}>
-          <TouchableOpacity style={styles.manualBtn} onPress={() => navigation.navigate('Pay', { upiId: '', payeeName: '', amount: '', note: '' })}>
-            <Text style={styles.manualBtnText}>Enter UPI ID manually</Text>
-          </TouchableOpacity>
+          <View style={styles.actionRow}>
+            <TouchableOpacity style={styles.galleryBtn} onPress={handleGalleryScan}>
+              <Text style={styles.galleryBtnText}>🖼️ Gallery</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.manualBtn} onPress={() => navigation.navigate('Pay', { upiId: '', payeeName: '', amount: '', note: '' })}>
+              <Text style={styles.manualBtnText}>Enter UPI ID</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </View>
     </View>
@@ -110,6 +145,9 @@ const styles = StyleSheet.create({
   tr: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 8 },
   bl: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 8 },
   br: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 8 },
-  manualBtn: { backgroundColor: COLORS.elevated, borderRadius: 999, paddingHorizontal: 24, paddingVertical: 12, borderWidth: 1, borderColor: COLORS.borderLight },
-  manualBtnText: { color: COLORS.accent, fontSize: FONT_SIZE.md, fontWeight: '600' },
+  manualBtn: { flex: 1, backgroundColor: COLORS.elevated, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 14, borderWidth: 1, borderColor: COLORS.borderLight, alignItems: 'center' },
+  manualBtnText: { color: COLORS.accent, fontSize: FONT_SIZE.md, fontWeight: '700' },
+  actionRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 12 },
+  galleryBtn: { flex: 1, backgroundColor: COLORS.accent, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 14, alignItems: 'center' },
+  galleryBtnText: { color: '#fff', fontSize: FONT_SIZE.md, fontWeight: '700' },
 });

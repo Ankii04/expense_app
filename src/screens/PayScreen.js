@@ -1,15 +1,13 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert } from 'react-native';
+import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert, Linking } from 'react-native';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS, formatCurrency } from '../utils/theme';
-import { useExpenses } from '../hooks/useExpenses';
+import { useExpenses, useGroups } from '../hooks/useExpenses';
 import CategoryPicker from '../components/CategoryPicker';
 import ContactPicker from '../components/ContactPicker';
-import BottomSheet from '../components/BottomSheet';
-import UPIAppChooser from '../components/UPIAppChooser';
 
 export default function PayScreen({ route, navigation }) {
   const params = route.params || {};
   const { addExpense } = useExpenses();
+  const { groups, updateGroup, refresh: refreshGroups } = useGroups();
 
   const [upiId, setUpiId] = useState(params.upiId || '');
   const [payeeName, setPayeeName] = useState(params.payeeName || '');
@@ -18,45 +16,105 @@ export default function PayScreen({ route, navigation }) {
   const [note, setNote] = useState(params.note || '');
   const [contact, setContact] = useState(null);
   const [showContacts, setShowContacts] = useState(false);
-  const [showUPISheet, setShowUPISheet] = useState(false);
-  const [selectedApp, setSelectedApp] = useState(null);
+  
+  // Group split state
+  const [splitGroupId, setSplitGroupId] = useState(null);
+  const [selectedMembers, setSelectedMembers] = useState([]);
 
   const canPay = upiId.trim().length > 0 && Number(amount) > 0;
 
-  const handlePay = () => {
+  const handlePay = async () => {
     if (!canPay) {
       Alert.alert('Missing Info', 'Please enter UPI ID and amount');
       return;
     }
-    setShowUPISheet(true);
+
+    const url = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(payeeName || upiId)}&am=${amount}&tn=${encodeURIComponent(note || 'Antigravity')}&cu=INR`;
+    
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (supported) {
+        await Linking.openURL(url);
+        
+        // Confirmation alert after app switch
+        setTimeout(() => {
+          Alert.alert('Payment Successful?', 'Has the payment been completed?', [
+            { text: 'No', style: 'cancel' },
+            {
+              text: 'Yes, Log it',
+              onPress: async () => {
+                const expAmount = Number(amount);
+                const expNote = note || `To ${payeeName || upiId}`;
+                
+                // 1. Log personal expense
+                await addExpense({
+                  amount: expAmount,
+                  category,
+                  upiId,
+                  payeeName,
+                  note: expNote,
+                  contactName: contact?.name || '',
+                  contactPhone: contact?.phone || '',
+                });
+
+                // 2. Handle group split
+                if (splitGroupId && selectedMembers.length > 0) {
+                  const group = groups.find(g => g.id === splitGroupId);
+                  if (group) {
+                    const perPerson = expAmount / (selectedMembers.length + 1);
+                    const updatedExpenses = [...group.expenses, {
+                      id: Date.now().toString(),
+                      title: expNote,
+                      amount: expAmount,
+                      payerPhone: 'self',
+                      date: new Date().toISOString()
+                    }];
+
+                    const updatedMembers = group.members.map(m => {
+                      let newBalance = m.balance || 0;
+                      if (selectedMembers.includes(m.phone)) {
+                        newBalance -= perPerson;
+                      }
+                      return { ...m, balance: newBalance };
+                    });
+
+                    await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
+                  }
+                }
+
+                Alert.alert('Recorded! ✓', `${formatCurrency(amount)} payment logged`);
+                navigation.navigate('Home');
+              },
+            },
+          ]);
+        }, 1500);
+      } else {
+        Alert.alert('Error', 'No UPI apps found on this device');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Could not launch payment app');
+    }
   };
 
-  const handleAppSelected = (app) => {
-    setSelectedApp(app);
-    setShowUPISheet(false);
+  const handleToggleGroup = (groupId) => {
+    if (splitGroupId === groupId) {
+      setSplitGroupId(null);
+      setSelectedMembers([]);
+    } else {
+      setSplitGroupId(groupId);
+      const group = groups.find(g => g.id === groupId);
+      if (group) {
+        setSelectedMembers(group.members.filter(m => m.phone !== 'self').map(m => m.phone));
+      }
+    }
+  };
 
-    setTimeout(() => {
-      Alert.alert('Payment Confirmation', 'Was the payment successful?', [
-        { text: 'No', style: 'cancel' },
-        {
-          text: 'Yes',
-          onPress: async () => {
-            await addExpense({
-              amount: Number(amount),
-              category,
-              upiId,
-              payeeName,
-              note,
-              contactName: contact?.name || '',
-              contactPhone: contact?.phone || '',
-              upiApp: app.id,
-            });
-            Alert.alert('Logged! ✓', `${formatCurrency(amount)} expense recorded`);
-            navigation.goBack();
-          },
-        },
-      ]);
-    }, 1000);
+  const toggleMember = (phone) => {
+    if (selectedMembers.includes(phone)) {
+      setSelectedMembers(selectedMembers.filter(p => p !== phone));
+    } else {
+      setSelectedMembers([...selectedMembers, phone]);
+    }
   };
 
   return (
@@ -93,6 +151,41 @@ export default function PayScreen({ route, navigation }) {
         <Text style={styles.label}>Note</Text>
         <TextInput style={styles.input} placeholder="What's this for?" placeholderTextColor={COLORS.textMuted} value={note} onChangeText={setNote} />
 
+        {/* Group Split Section */}
+        {groups.length > 0 && (
+          <>
+            <Text style={styles.label}>Split with Group</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.groupScroll}>
+              {groups.map(g => (
+                <TouchableOpacity 
+                  key={g.id} 
+                  style={[styles.groupChip, splitGroupId === g.id && styles.groupChipActive]} 
+                  onPress={() => handleToggleGroup(g.id)}
+                >
+                  <Text style={[styles.groupChipText, splitGroupId === g.id && { color: '#fff' }]}>{g.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {splitGroupId && (
+              <View style={styles.memberSelectBox}>
+                 <Text style={styles.memberSelectTitle}>Include these members in the split:</Text>
+                 <View style={styles.memberGrid}>
+                    {groups.find(g => g.id === splitGroupId)?.members.filter(m => m.phone !== 'self').map(m => (
+                      <TouchableOpacity 
+                        key={m.phone} 
+                        style={[styles.memberChip, selectedMembers.includes(m.phone) && styles.memberChipActive]}
+                        onPress={() => toggleMember(m.phone)}
+                      >
+                        <Text style={[styles.memberChipText, selectedMembers.includes(m.phone) && { color: '#fff' }]}>{m.name}</Text>
+                      </TouchableOpacity>
+                    ))}
+                 </View>
+              </View>
+            )}
+          </>
+        )}
+
         {/* Pay Button */}
         <TouchableOpacity style={[styles.payBtn, !canPay && styles.payBtnDisabled]} onPress={handlePay} disabled={!canPay}>
           <Text style={styles.payBtnText}>Pay {amount ? formatCurrency(amount) : ''}</Text>
@@ -126,6 +219,14 @@ const styles = StyleSheet.create({
   payBtn: { backgroundColor: COLORS.accent, borderRadius: BORDER_RADIUS.md, paddingVertical: 16, alignItems: 'center', marginTop: 32, shadowColor: COLORS.accent, shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 12, elevation: 8 },
   payBtnDisabled: { opacity: 0.4 },
   payBtnText: { color: '#fff', fontSize: FONT_SIZE.lg, fontWeight: '800' },
-  sheetTitle: { color: COLORS.textPrimary, fontSize: FONT_SIZE.xl, fontWeight: '700', marginBottom: 4 },
-  sheetSub: { color: COLORS.textSecondary, fontSize: FONT_SIZE.sm, marginBottom: 16 },
+  groupScroll: { flexDirection: 'row', marginBottom: 12 },
+  groupChip: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, backgroundColor: COLORS.elevated, marginRight: 10, borderWidth: 1, borderColor: COLORS.border },
+  groupChipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  groupChipText: { color: COLORS.textSecondary, fontWeight: '600' },
+  memberSelectBox: { backgroundColor: COLORS.elevated, padding: 16, borderRadius: BORDER_RADIUS.md, borderWidth: 1, borderColor: COLORS.border, marginTop: 8 },
+  memberSelectTitle: { color: COLORS.textMuted, fontSize: 12, marginBottom: 12, fontWeight: '600' },
+  memberGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  memberChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+  memberChipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
+  memberChipText: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '600' },
 });

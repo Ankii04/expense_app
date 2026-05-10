@@ -12,23 +12,21 @@ export default function ExpenseCard({ expense, onPress, onDelete }) {
       onLongPress={onDelete}
       style={styles.card}
     >
-      {/* Category icon */}
-      <View style={[styles.iconWrap, { backgroundColor: cat.color + '18' }]}>
-        <Text style={styles.emoji}>{cat.emoji}</Text>
+      <View style={styles.left}>
+        <View style={[styles.iconWrap, { backgroundColor: cat.color + '18' }]}>
+          <Text style={styles.emoji}>{cat.emoji}</Text>
+        </View>
+        <View style={styles.info}>
+          <Text style={styles.title} numberOfLines={1}>
+            {expense.payeeName || expense.note || cat.name}
+          </Text>
+          <Text style={styles.sub} numberOfLines={1}>
+            {expense.upiId ? expense.upiId : cat.name}
+            {expense.contactName ? ` • ${expense.contactName}` : ''}
+          </Text>
+        </View>
       </View>
 
-      {/* Middle */}
-      <View style={styles.info}>
-        <Text style={styles.title} numberOfLines={1}>
-          {expense.payeeName || expense.note || cat.name}
-        </Text>
-        <Text style={styles.sub} numberOfLines={1}>
-          {expense.upiId ? expense.upiId : cat.name}
-          {expense.contactName ? ` • ${expense.contactName}` : ''}
-        </Text>
-      </View>
-
-      {/* Right */}
       <View style={styles.right}>
         <Text style={styles.amount}>{formatCurrency(expense.amount)}</Text>
         <Text style={styles.date}>{formatDate(expense.date)}</Text>
@@ -41,23 +39,36 @@ const styles = StyleSheet.create({
   card: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     backgroundColor: COLORS.card,
     borderRadius: BORDER_RADIUS.lg,
     padding: SPACING.lg,
-    marginBottom: SPACING.sm,
+    marginBottom: SPACING.md,
     borderWidth: 1,
     borderColor: COLORS.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  left: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
   },
   iconWrap: {
-    width: 44,
-    height: 44,
+    width: 48,
+    height: 48,
     borderRadius: BORDER_RADIUS.md,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: SPACING.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.03)',
   },
   emoji: {
-    fontSize: 20,
+    fontSize: 22,
   },
   info: {
     flex: 1,
@@ -66,24 +77,29 @@ const styles = StyleSheet.create({
   title: {
     color: COLORS.textPrimary,
     fontSize: FONT_SIZE.md,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
   sub: {
     color: COLORS.textSecondary,
-    fontSize: FONT_SIZE.sm,
-    marginTop: 2,
+    fontSize: FONT_SIZE.xs,
+    marginTop: 4,
+    fontWeight: '500',
   },
   right: {
     alignItems: 'flex-end',
+    marginLeft: SPACING.sm,
   },
   amount: {
     color: COLORS.textPrimary,
-    fontSize: FONT_SIZE.md,
-    fontWeight: '700',
+    fontSize: FONT_SIZE.lg,
+    fontWeight: '800',
   },
   date: {
     color: COLORS.textMuted,
-    fontSize: FONT_SIZE.xs,
-    marginTop: 2,
+    fontSize: 10,
+    marginTop: 6,
+    fontWeight: '600',
+    textTransform: 'uppercase',
   },
 });
