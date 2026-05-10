@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
-import { BarCodeScanner } from 'expo-barcode-scanner';
+import RNQRGenerator from 'rn-qr-generator';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../utils/theme';
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -56,16 +56,23 @@ export default function ScanScreen({ navigation }) {
     });
 
     if (!result.canceled && result.assets && result.assets[0].uri) {
-      const results = await BarCodeScanner.scanFromURLAsync(result.assets[0].uri);
-      if (results.length > 0) {
-        const parsed = parseUPIData(results[0].data);
-        if (parsed && parsed.upiId) {
-          navigation.navigate('Pay', parsed);
+      try {
+        const response = await RNQRGenerator.detect({
+          uri: result.assets[0].uri,
+        });
+
+        if (response.values && response.values.length > 0) {
+          const parsed = parseUPIData(response.values[0]);
+          if (parsed && parsed.upiId) {
+            navigation.navigate('Pay', parsed);
+          } else {
+            Alert.alert('Invalid QR', 'No valid UPI data found in this image.');
+          }
         } else {
-          Alert.alert('Invalid QR', 'No valid UPI data found in this image.');
+          Alert.alert('Scan Failed', 'Could not detect a QR code in this image.');
         }
-      } else {
-        Alert.alert('Scan Failed', 'Could not detect a QR code in this image.');
+      } catch (err) {
+        Alert.alert('Error', 'Something went wrong while scanning the image.');
       }
     }
   };

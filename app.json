@@ -52,8 +52,7 @@
         {
           "contactsPermission": "Antigravity needs contacts access to split expenses with friends."
         }
-      ],
-      "expo-barcode-scanner"
+      ]
     ],
     "extra": {
       "eas": {
