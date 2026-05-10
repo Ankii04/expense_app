@@ -35,7 +35,9 @@
         "android.permission.READ_CONTACTS",
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.SCHEDULE_EXACT_ALARM"
+        "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.WRITE_CONTACTS"
       ]
     },
     "plugins": [
@@ -54,8 +56,9 @@
     ],
     "extra": {
       "eas": {
-        "projectId": "REPLACE_WITH_YOUR_PROJECT_ID"
+        "projectId": "ddddfe21-8372-4156-ad50-2ae233730db1"
       }
-    }
+    },
+    "owner": "ankii04"
   }
 }
