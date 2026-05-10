@@ -1,0 +1,61 @@
+{
+  "expo": {
+    "name": "Antigravity",
+    "slug": "antigravity",
+    "scheme": "antigravity",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0F"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.antigravity.upi",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Antigravity needs camera access to scan UPI QR codes.",
+        "NSContactsUsageDescription": "Antigravity needs contacts access to split expenses with friends."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A0F"
+      },
+      "package": "com.antigravity.upi",
+      "versionCode": 1,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_CONTACTS",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.SCHEDULE_EXACT_ALARM"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Antigravity needs camera access to scan UPI QR codes."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Antigravity needs contacts access to split expenses with friends."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "REPLACE_WITH_YOUR_PROJECT_ID"
+      }
+    }
+  }
+}
