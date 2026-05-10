@@ -40,5 +40,8 @@
   "devDependencies": {
     "@babel/core": "^7.25.0"
   },
-  "private": true
+  "private": true,
+  "overrides": {
+    "expo-image-loader": "6.0.0"
+  }
 }
