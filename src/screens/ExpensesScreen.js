@@ -7,10 +7,12 @@ import ExpenseCard from '../components/ExpenseCard';
 import CategoryPicker from '../components/CategoryPicker';
 
 export default function ExpensesScreen() {
-  const { expenses, loading, refresh, deleteExpense, addExpense } = useExpenses();
+  const { expenses, loading, refresh, deleteExpense, addExpense, updateExpense } = useExpenses();
   const { groups, updateGroup, refresh: refreshGroups } = useGroups();
   const [filter, setFilter] = useState('all');
   const [showAddModal, setShowAddModal] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [editingExpense, setEditingExpense] = useState(null);
 
   // Form state
   const [amount, setAmount] = useState('');
@@ -23,7 +25,13 @@ export default function ExpensesScreen() {
 
   useFocusEffect(useCallback(() => { refresh(); refreshGroups(); }, [refresh, refreshGroups]));
 
-  const filtered = filter === 'all' ? expenses : expenses.filter((e) => e.category === filter);
+  const filtered = expenses.filter((e) => {
+    const matchesFilter = filter === 'all' || e.category === filter;
+    const matchesSearch = searchQuery === '' || 
+      (e.note && e.note.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (e.payeeName && e.payeeName.toLowerCase().includes(searchQuery.toLowerCase()));
+    return matchesFilter && matchesSearch;
+  });
 
   const handleDelete = (exp) => {
     Alert.alert('Delete Expense', `Remove ${formatCurrency(exp.amount)}?`, [
@@ -32,7 +40,15 @@ export default function ExpensesScreen() {
     ]);
   };
 
-  const handleAddManual = async () => {
+  const handleEdit = (exp) => {
+    setEditingExpense(exp);
+    setAmount(exp.amount.toString());
+    setNote(exp.note || exp.payeeName);
+    setCategory(exp.category);
+    setShowAddModal(true);
+  };
+
+  const handleSaveExpense = async () => {
     if (!amount || Number(amount) <= 0) {
       Alert.alert('Invalid Amount', 'Please enter a valid amount');
       return;
@@ -41,41 +57,56 @@ export default function ExpensesScreen() {
     const expAmount = Number(amount);
     const expNote = note || 'Manual Entry';
 
-    // 1. Add to main expenses
-    await addExpense({
-      amount: expAmount,
-      note: expNote,
-      category: category,
-      payeeName: expNote,
-      date: new Date().toISOString(),
-    });
+    if (editingExpense) {
+      // Update existing
+      await updateExpense(editingExpense.id, {
+        amount: expAmount,
+        note: expNote,
+        category: category,
+        payeeName: expNote,
+      });
+    } else {
+      // 1. Add to main expenses
+      await addExpense({
+        amount: expAmount,
+        note: expNote,
+        category: category,
+        payeeName: expNote,
+        date: new Date().toISOString(),
+      });
 
-    // 2. If splitting with group, update group balances
-    if (splitGroupId && selectedMembers.length > 0) {
-      const group = groups.find(g => g.id === splitGroupId);
-      if (group) {
-        const perPerson = expAmount / (selectedMembers.length + 1); // +1 for self
-        const updatedExpenses = [...group.expenses, {
-          id: Date.now().toString(),
-          title: expNote,
-          amount: expAmount,
-          payerPhone: 'self',
-          date: new Date().toISOString()
-        }];
+      // 2. If splitting with group, update group balances
+      if (splitGroupId && selectedMembers.length > 0) {
+        const group = groups.find(g => g.id === splitGroupId);
+        if (group) {
+          const perPerson = expAmount / (selectedMembers.length + 1); // +1 for self
+          const updatedExpenses = [...group.expenses, {
+            id: Date.now().toString(),
+            title: expNote,
+            amount: expAmount,
+            payerPhone: 'self',
+            date: new Date().toISOString()
+          }];
 
-        const updatedMembers = group.members.map(m => {
-          let newBalance = m.balance || 0;
-          if (selectedMembers.includes(m.phone)) {
-            newBalance -= perPerson;
-          }
-          return { ...m, balance: newBalance };
-        });
+          const updatedMembers = group.members.map(m => {
+            let newBalance = m.balance || 0;
+            if (selectedMembers.includes(m.phone)) {
+              newBalance -= perPerson;
+            }
+            return { ...m, balance: newBalance };
+          });
 
-        await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
+          await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
+        }
       }
     }
 
+    resetForm();
+  };
+
+  const resetForm = () => {
     setShowAddModal(false);
+    setEditingExpense(null);
     setAmount('');
     setNote('');
     setCategory('other');
@@ -114,9 +145,42 @@ export default function ExpensesScreen() {
           <Text style={styles.title}>History</Text>
           <Text style={styles.subtitle}>Track your spending</Text>
         </View>
-        <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
-          <Text style={styles.addBtnText}>+ Add Cash</Text>
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <TouchableOpacity 
+            style={[styles.addBtn, { backgroundColor: COLORS.redDim, borderColor: COLORS.red + '30' }]} 
+            onPress={() => {
+              Alert.alert('Clear History', 'Are you sure you want to delete ALL expenses?', [
+                { text: 'Cancel', style: 'cancel' },
+                { text: 'Clear All', style: 'destructive', onPress: async () => {
+                  for (const exp of expenses) {
+                    await deleteExpense(exp.id);
+                  }
+                  Alert.alert('Success', 'History cleared');
+                }},
+              ]);
+            }}
+          >
+            <Text style={[styles.addBtnText, { color: COLORS.red }]}>Clear</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.addBtn} onPress={() => setShowAddModal(true)}>
+            <Text style={styles.addBtnText}>+ Add Cash</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      <View style={styles.searchContainer}>
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search by note or payee..."
+          placeholderTextColor={COLORS.textMuted}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+        />
+        {searchQuery !== '' && (
+          <TouchableOpacity onPress={() => setSearchQuery('')} style={styles.clearSearch}>
+            <Text style={styles.clearSearchText}>✕</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       <View style={styles.summaryCard}>
@@ -138,10 +202,25 @@ export default function ExpensesScreen() {
         keyExtractor={(item) => item.id}
         refreshing={loading}
         onRefresh={refresh}
+        keyboardShouldPersistTaps="always"
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         renderItem={({ item }) => (
-          <ExpenseCard expense={item} onDelete={() => handleDelete(item)} />
+          <ExpenseCard 
+            expense={item} 
+            onPress={() => {
+              Alert.alert(
+                'Expense Actions',
+                `What would you like to do with ${item.note || item.payeeName || 'this expense'}?`,
+                [
+                  { text: 'Cancel', style: 'cancel' },
+                  { text: 'Delete', style: 'destructive', onPress: () => handleDelete(item) },
+                  { text: 'Edit', onPress: () => handleEdit(item) },
+                ]
+              );
+            }}
+            onDelete={() => handleDelete(item)} 
+          />
         )}
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -164,13 +243,13 @@ export default function ExpensesScreen() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Manual Expense</Text>
-              <TouchableOpacity onPress={() => setShowAddModal(false)}>
+              <Text style={styles.modalTitle}>{editingExpense ? 'Edit Expense' : 'Manual Expense'}</Text>
+              <TouchableOpacity onPress={resetForm}>
                 <Text style={styles.closeText}>✕</Text>
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
+            <ScrollView keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
               <Text style={styles.label}>Amount (₹)</Text>
               <TextInput
                 style={styles.amountInput}
@@ -240,8 +319,8 @@ export default function ExpensesScreen() {
                 </>
               )}
 
-              <TouchableOpacity style={styles.saveBtn} onPress={handleAddManual}>
-                <Text style={styles.saveBtnText}>Save Expense</Text>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSaveExpense}>
+                <Text style={styles.saveBtnText}>{editingExpense ? 'Update Expense' : 'Save Expense'}</Text>
               </TouchableOpacity>
               <View style={{ height: 40 }} />
             </ScrollView>
@@ -296,6 +375,34 @@ const styles = StyleSheet.create({
   emptySub: { color: COLORS.textMuted, fontSize: FONT_SIZE.md, marginTop: 8, textAlign: 'center' },
   emptyAddBtn: { marginTop: 24, backgroundColor: COLORS.accent, paddingHorizontal: 24, paddingVertical: 14, borderRadius: BORDER_RADIUS.lg },
   emptyAddBtnText: { color: '#fff', fontWeight: '700', fontSize: FONT_SIZE.md },
+
+  // Search
+  searchContainer: {
+    marginHorizontal: SPACING.xl,
+    backgroundColor: COLORS.card,
+    borderRadius: BORDER_RADIUS.lg,
+    paddingHorizontal: 16,
+    paddingVertical: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  searchInput: {
+    flex: 1,
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZE.md,
+    height: 44,
+  },
+  clearSearch: {
+    padding: 8,
+  },
+  clearSearchText: {
+    color: COLORS.textMuted,
+    fontSize: 16,
+    fontWeight: '700',
+  },
 
   // Modal
   modalOverlay: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: 'flex-end' },

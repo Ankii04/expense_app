@@ -6,6 +6,8 @@ const KEYS = {
   SPLITS: '@antigravity_splits',
   GROUPS: '@antigravity_groups',
   RECURRING: '@antigravity_recurring',
+  LENDS: '@spendify_lends',
+  PROFILE: '@spendify_profile',
 };
 
 // ─── Generic helpers ────────────────────────────────────────────
@@ -58,6 +60,15 @@ export const deleteExpense = async (id) => {
   let list = await getExpenses();
   list = list.filter((e) => e.id !== id);
   await save(KEYS.EXPENSES, list);
+};
+
+export const updateExpense = async (id, updates) => {
+  const list = await getExpenses();
+  const idx = list.findIndex((e) => e.id === id);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], ...updates };
+    await save(KEYS.EXPENSES, list);
+  }
 };
 
 export const getExpensesByMonth = async (monthKey) => {
@@ -119,9 +130,8 @@ export const addSplit = async (split) => {
     id: uid(),
     title: split.title || 'Untitled',
     totalAmount: Number(split.totalAmount) || 0,
-    splitType: split.splitType || 'equal', // 'equal' | 'custom'
+    splitType: split.splitType || 'equal',
     members: split.members || [],
-    // each member: { name, phone, share, paid: boolean }
     date: new Date().toISOString(),
   };
   list.unshift(entry);
@@ -154,8 +164,8 @@ export const addGroup = async (group) => {
   const entry = {
     id: uid(),
     name: group.name || 'New Group',
-    members: group.members || [], // { name, phone, balance }
-    expenses: [], // { title, amount, payerPhone, date }
+    members: group.members || [],
+    expenses: [],
     date: new Date().toISOString(),
   };
   list.unshift(entry);
@@ -190,7 +200,7 @@ export const addRecurring = async (item) => {
     name: item.name || '',
     upiId: item.upiId || '',
     amount: Number(item.amount) || 0,
-    frequency: item.frequency || 'monthly', // daily | weekly | monthly
+    frequency: item.frequency || 'monthly',
     nextDue: item.nextDue || new Date().toISOString(),
     category: item.category || 'other',
     enabled: true,
@@ -214,6 +224,63 @@ export const deleteRecurring = async (id) => {
   let list = await getRecurring();
   list = list.filter((r) => r.id !== id);
   await save(KEYS.RECURRING, list);
+};
+
+// ─────────────────────────────────────────────────────────────────
+//  LENDS  –  per-contact lend/borrow records
+// ─────────────────────────────────────────────────────────────────
+export const getLends = () => load(KEYS.LENDS);
+
+export const addLend = async (lend) => {
+  const list = await getLends();
+  const entry = {
+    id: uid(),
+    contactName: lend.contactName || '',
+    contactPhone: lend.contactPhone || '',
+    type: lend.type || 'lend', // 'lend' | 'borrow'
+    amount: Number(lend.amount) || 0,
+    note: lend.note || '',
+    paid: false,
+    date: lend.date || new Date().toISOString(),
+  };
+  list.unshift(entry);
+  await save(KEYS.LENDS, list);
+  return entry;
+};
+
+export const updateLend = async (id, updates) => {
+  const list = await getLends();
+  const idx = list.findIndex((l) => l.id === id);
+  if (idx !== -1) {
+    list[idx] = { ...list[idx], ...updates };
+    await save(KEYS.LENDS, list);
+  }
+};
+
+export const deleteLend = async (id) => {
+  let list = await getLends();
+  list = list.filter((l) => l.id !== id);
+  await save(KEYS.LENDS, list);
+};
+
+// ─────────────────────────────────────────────────────────────────
+//  PROFILE
+// ─────────────────────────────────────────────────────────────────
+export const getProfile = async () => {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.PROFILE);
+    return raw ? JSON.parse(raw) : { name: 'User' };
+  } catch {
+    return { name: 'User' };
+  }
+};
+
+export const setProfile = async (profile) => {
+  try {
+    await AsyncStorage.setItem(KEYS.PROFILE, JSON.stringify(profile));
+  } catch (e) {
+    console.warn('Profile save error:', e);
+  }
 };
 
 // ─── Clear all (for dev) ────────────────────────────────────────

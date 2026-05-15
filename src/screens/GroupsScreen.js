@@ -1,7 +1,9 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, Alert, Modal, Share } from 'react-native';
+import React, { useState, useCallback, useEffect } from 'react';
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, Alert, Modal, Share, BackHandler } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
-import { COLORS, SPACING, BORDER_RADIUS, formatCurrency } from '../utils/theme';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
+import { COLORS, SPACING, BORDER_RADIUS, formatCurrency, formatCurrencyHTML, escapeHtml } from '../utils/theme';
 import { useGroups } from '../hooks/useExpenses';
 import ContactPicker from '../components/ContactPicker';
 
@@ -20,12 +22,31 @@ export default function GroupsScreen() {
   const [expTitle, setExpTitle] = useState('');
   const [expAmount, setExpAmount] = useState('');
   const [payerPhone, setPayerPhone] = useState('self');
+  const [editingExpense, setEditingExpense] = useState(null);
 
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
+  // Handle hardware back button
+  useEffect(() => {
+    const backAction = () => {
+      if (selectedGroup) {
+        setSelectedGroup(null);
+        return true;
+      }
+      if (creating) {
+        setCreating(false);
+        return true;
+      }
+      return false;
+    };
+
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
+    return () => backHandler.remove();
+  }, [selectedGroup, creating]);
+
   const handleAddMember = (contact) => {
     if (members.find(m => m.phone === contact.phone)) return;
-    setMembers([...members, { name: contact.name, phone: contact.phone, balance: 0 }]);
+    setMembers([...members, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0 }]);
   };
 
   const handleCreateGroup = async () => {
@@ -33,7 +54,7 @@ export default function GroupsScreen() {
       Alert.alert('Error', 'Please enter a group name');
       return;
     }
-    const finalMembers = [...members, { name: 'You', phone: 'self', balance: 0 }];
+    const finalMembers = [...members, { name: 'You', phone: 'self', balance: 0, totalSpent: 0 }];
     await addGroup({ name: groupName, members: finalMembers });
     setCreating(false);
     setGroupName('');
@@ -48,33 +69,76 @@ export default function GroupsScreen() {
       setAddExpenseModal(true);
       return;
     }
-    const amount = Number(expAmount);
-    const updatedExpenses = [...targetGroup.expenses, { 
-      id: Date.now().toString(),
-      title: expTitle, 
-      amount, 
-      payerPhone, 
-      date: new Date().toISOString() 
-    }];
 
-    const perPerson = amount / targetGroup.members.length;
-    const updatedMembers = targetGroup.members.map(m => {
-      let newBalance = m.balance || 0;
-      if (m.phone === payerPhone) {
-        newBalance += (amount - perPerson);
-      } else {
-        newBalance -= perPerson;
-      }
-      return { ...m, balance: newBalance };
-    });
+    const amount = Number(expAmount);
+    let updatedExpenses;
+    
+    if (editingExpense) {
+      updatedExpenses = targetGroup.expenses.map(e => 
+        e.id === editingExpense.id 
+          ? { ...e, title: expTitle, amount, payerPhone } 
+          : e
+      );
+    } else {
+      updatedExpenses = [...targetGroup.expenses, { 
+        id: Date.now().toString(),
+        title: expTitle, 
+        amount, 
+        payerPhone, 
+        date: new Date().toISOString() 
+      }];
+    }
+
+    const updatedMembers = recalculateBalances(targetGroup.members, updatedExpenses);
 
     await updateGroup(targetGroup.id, { expenses: updatedExpenses, members: updatedMembers });
     if (selectedGroup?.id === targetGroup.id) {
       setSelectedGroup({ ...targetGroup, expenses: updatedExpenses, members: updatedMembers });
     }
+    resetExpenseForm();
+  };
+
+  const handleDeleteExpense = async (expId) => {
+    if (!selectedGroup) return;
+    
+    const updatedExpenses = selectedGroup.expenses.filter(e => e.id !== expId);
+    const updatedMembers = recalculateBalances(selectedGroup.members, updatedExpenses);
+
+    await updateGroup(selectedGroup.id, { expenses: updatedExpenses, members: updatedMembers });
+    setSelectedGroup({ ...selectedGroup, expenses: updatedExpenses, members: updatedMembers });
+  };
+
+  const recalculateBalances = (members, expenses) => {
+    const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
+    expenses.forEach(exp => {
+      const amount = Number(exp.amount);
+      const perPerson = amount / members.length;
+      newMembers.forEach(m => {
+        if (m.phone === exp.payerPhone) {
+          m.balance += (amount - perPerson);
+          m.totalSpent += amount;
+        } else {
+          m.balance -= perPerson;
+        }
+      });
+    });
+    return newMembers;
+  };
+
+  const resetExpenseForm = () => {
     setAddExpenseModal(false);
+    setEditingExpense(null);
     setExpTitle('');
     setExpAmount('');
+    setPayerPhone('self');
+  };
+
+  const handleEditExpense = (exp) => {
+    setEditingExpense(exp);
+    setExpTitle(exp.title);
+    setExpAmount(exp.amount.toString());
+    setPayerPhone(exp.payerPhone);
+    setAddExpenseModal(true);
   };
 
   const handleSettle = async () => {
@@ -83,10 +147,85 @@ export default function GroupsScreen() {
     const idx = settleModal.memberIdx;
     const updatedMembers = [...selectedGroup.members];
     updatedMembers[idx].balance += amount; 
+    
+    // We also record a "settlement" expense to keep history clean?
+    // For now just update balance as per original code.
+    
     await updateGroup(selectedGroup.id, { members: updatedMembers });
     setSelectedGroup({ ...selectedGroup, members: updatedMembers });
     setSettleModal(null);
     setSettleAmount('');
+  };
+
+  const generatePDFReport = async () => {
+    if (!selectedGroup) return;
+
+    try {
+      // Use escapeHtml for all user data and formatCurrencyHTML (no rupee sign) to avoid WebView encoding issues
+      const groupName = escapeHtml(selectedGroup.name);
+      const reportDate = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+
+      const memberRows = (selectedGroup.members || []).map(m => {
+        const name = escapeHtml(m.name || '');
+        const spent = formatCurrencyHTML(m.totalSpent || 0);
+        const balance = m.balance || 0;
+        const balStr = (balance >= 0 ? '+' : '') + formatCurrencyHTML(balance);
+        const balClass = balance >= 0 ? 'positive' : 'negative';
+        const youBadge = m.phone === 'self' ? '<span class="chip">YOU</span>' : '';
+        return `<tr><td><strong>${name}</strong>${youBadge}</td><td>${spent}</td><td class="amount ${balClass}">${balStr}</td></tr>`;
+      }).join('');
+
+      const expenseRows = (selectedGroup.expenses || []).map(exp => {
+        const title = escapeHtml(exp.title || '');
+        const payer = escapeHtml(selectedGroup.members.find(m => m.phone === exp.payerPhone)?.name || 'Someone');
+        const date = exp.date ? new Date(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
+        const amount = formatCurrencyHTML(exp.amount || 0);
+        return `<tr><td>${title}</td><td>${payer}</td><td>${date}</td><td class="amount">${amount}</td></tr>`;
+      }).join('');
+
+      const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no">
+<style>
+body{font-family:Arial,sans-serif;padding:30px;color:#1F2937;line-height:1.5;}
+.header{border-bottom:3px solid #6366F1;padding-bottom:20px;margin-bottom:30px;}
+h1{color:#6366F1;margin:0;font-size:28px;}
+.date{color:#6B7280;font-size:14px;margin-top:5px;}
+.section{margin-bottom:40px;}
+.section-title{font-size:18px;font-weight:800;color:#111827;margin-bottom:16px;text-transform:uppercase;letter-spacing:0.5px;}
+table{width:100%;border-collapse:collapse;}
+th{text-align:left;padding:10px 12px;background:#F9FAFB;color:#4B5563;font-size:11px;font-weight:700;text-transform:uppercase;border-bottom:2px solid #E5E7EB;}
+td{padding:12px;border-bottom:1px solid #F3F4F6;font-size:13px;}
+.amount{font-weight:700;text-align:right;font-family:monospace;font-size:14px;}
+.positive{color:#059669;}
+.negative{color:#DC2626;}
+.footer{margin-top:40px;padding-top:20px;border-top:1px solid #E5E7EB;font-size:11px;color:#9CA3AF;text-align:center;}
+.chip{display:inline-block;padding:2px 7px;border-radius:4px;background:#EEF2FF;color:#6366F1;font-size:10px;font-weight:700;margin-left:5px;}
+</style>
+</head>
+<body>
+<div class="header"><h1>${groupName}</h1><div class="date">Expense Report - Generated on ${reportDate}</div></div>
+<div class="section"><div class="section-title">Settlement Summary</div>
+<table><thead><tr><th>Member</th><th>Total Spent</th><th style="text-align:right">Net Balance</th></tr></thead>
+<tbody>${memberRows}</tbody></table></div>
+<div class="section"><div class="section-title">Transactions</div>
+<table><thead><tr><th>Expense</th><th>Paid By</th><th>Date</th><th style="text-align:right">Amount</th></tr></thead>
+<tbody>${expenseRows || '<tr><td colspan="4" style="text-align:center;color:#9CA3AF">No transactions yet</td></tr>'}</tbody></table></div>
+<div class="footer">Generated by Spendify App</div>
+</body></html>`;
+
+      const { uri } = await Print.printToFileAsync({ html: htmlContent });
+      await Sharing.shareAsync(uri, {
+        UTI: '.pdf',
+        mimeType: 'application/pdf',
+        dialogTitle: `Report - ${selectedGroup.name}`,
+      });
+    } catch (error) {
+      console.error('PDF Generation Error:', error);
+      Alert.alert('Report Error', `Could not generate PDF: ${error.message || 'Unknown error'}`);
+    }
   };
 
   const handleShareDebt = async (member) => {
@@ -112,7 +251,7 @@ export default function GroupsScreen() {
   if (creating) {
     return (
       <View style={styles.container}>
-        <ScrollView contentContainerStyle={styles.content}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
           <Text style={styles.title}>New Group</Text>
           <Text style={styles.label}>Group Name</Text>
           <TextInput style={styles.input} placeholder="Flatmates, Trip, etc." placeholderTextColor={COLORS.textMuted} value={groupName} onChangeText={setGroupName} />
@@ -149,7 +288,7 @@ export default function GroupsScreen() {
 
   return (
     <View style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
         <View style={styles.headerRow}>
           <Text style={styles.title}>Groups</Text>
           <TouchableOpacity style={styles.newBtn} onPress={() => setCreating(true)}>
@@ -189,7 +328,7 @@ export default function GroupsScreen() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      <Modal visible={!!selectedGroup} animationType="slide">
+      <Modal visible={!!selectedGroup} animationType="slide" onRequestClose={() => setSelectedGroup(null)}>
          <View style={styles.modalContainer}>
             {selectedGroup && (
               <>
@@ -199,13 +338,18 @@ export default function GroupsScreen() {
                    <TouchableOpacity onPress={() => setAddExpenseModal(true)} style={styles.modalAddBtn}><Text style={styles.addExpBtnText}>+ Expense</Text></TouchableOpacity>
                 </View>
 
-                <ScrollView contentContainerStyle={{ padding: 24 }}>
-                   <Text style={styles.sectionTitle}>Balances & Settlement</Text>
+                <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 80 }} keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
+                   <View style={styles.sectionHeaderRow}>
+                      <Text style={styles.sectionTitle}>Balances & Settlement</Text>
+                      <TouchableOpacity style={styles.reportBtn} onPress={generatePDFReport}>
+                        <Text style={styles.reportBtnText}>📄 Report</Text>
+                      </TouchableOpacity>
+                   </View>
                    <View style={styles.balanceCard}>
                       {selectedGroup.members.map((m, i) => (
                         <View key={i} style={styles.memberBalanceItem}>
                            <View style={{ flex: 1 }}>
-                             <Text style={styles.mName}>{m.name}</Text>
+                             <Text style={styles.mName}>{m.name} {m.phone === 'self' ? '(You)' : ''}</Text>
                              <Text style={[styles.mBalance, { color: m.balance >= 0 ? COLORS.green : COLORS.red }]}>
                                {m.balance >= 0 ? 'is owed ' : 'owes you '}
                                {formatCurrency(Math.abs(m.balance))}
@@ -223,27 +367,41 @@ export default function GroupsScreen() {
                       ))}
                    </View>
 
-                   <Text style={styles.sectionTitle}>History</Text>
+                   <Text style={[styles.sectionTitle, { marginTop: 32, marginBottom: 16 }]}>History</Text>
                    {selectedGroup.expenses.length === 0 ? (
-                     <View style={styles.emptyHistory}>
-                        <Text style={styles.emptyHistoryText}>No expenses logged yet.</Text>
-                     </View>
-                   ) : (
-                     selectedGroup.expenses.map((exp, i) => (
-                        <View key={i} style={styles.expItem}>
+                      <View style={styles.emptyHistory}>
+                         <Text style={styles.emptyHistoryText}>No expenses logged yet.</Text>
+                      </View>
+                    ) : (
+                      selectedGroup.expenses.map((exp, i) => (
+                        <TouchableOpacity 
+                          key={exp.id || i} 
+                          style={styles.expItem}
+                          onPress={() => {
+                            Alert.alert(
+                              'Group Expense',
+                              `Manage "${exp.title}"`,
+                              [
+                                { text: 'Cancel', style: 'cancel' },
+                                { text: 'Delete', style: 'destructive', onPress: () => handleDeleteExpense(exp.id) },
+                                { text: 'Edit', onPress: () => handleEditExpense(exp) },
+                              ]
+                            );
+                          }}
+                        >
                            <View style={styles.expIcon}><Text>🧾</Text></View>
                            <View style={{ flex: 1, marginLeft: 12 }}>
                              <Text style={styles.expTitle}>{exp.title}</Text>
                              <Text style={styles.expSub}>Paid by {selectedGroup.members.find(m => m.phone === exp.payerPhone)?.name || 'Someone'}</Text>
                            </View>
                            <Text style={styles.expAmount}>{formatCurrency(exp.amount)}</Text>
-                        </View>
-                     ))
-                   )}
+                        </TouchableOpacity>
+                      ))
+                    )}
                    <View style={{ height: 60 }} />
                 </ScrollView>
 
-                <Modal visible={!!settleModal} transparent animationType="fade">
+                <Modal visible={!!settleModal} transparent animationType="fade" onRequestClose={() => setSettleModal(null)}>
                    <View style={styles.overlay}>
                       <View style={styles.settleCard}>
                          <Text style={styles.formTitle}>Record Payment</Text>
@@ -269,10 +427,10 @@ export default function GroupsScreen() {
                    </View>
                 </Modal>
 
-                <Modal visible={addExpenseModal} transparent animationType="fade">
+                <Modal visible={addExpenseModal} transparent animationType="fade" onRequestClose={resetExpenseForm}>
                    <View style={styles.overlay}>
                       <View style={styles.formCard}>
-                         <Text style={styles.formTitle}>Add Group Expense</Text>
+                         <Text style={styles.formTitle}>{editingExpense ? 'Edit Group Expense' : 'Add Group Expense'}</Text>
                          <TextInput style={styles.input} placeholder="What for? (e.g. Dinner)" placeholderTextColor={COLORS.textMuted} value={expTitle} onChangeText={setExpTitle} />
                          <TextInput style={styles.input} placeholder="Amount (₹)" placeholderTextColor={COLORS.textMuted} value={expAmount} onChangeText={setExpAmount} keyboardType="numeric" />
                          <Text style={styles.label}>Who paid?</Text>
@@ -288,11 +446,11 @@ export default function GroupsScreen() {
                             ))}
                          </ScrollView>
                          <View style={styles.row}>
-                            <TouchableOpacity style={styles.cancelBtn} onPress={() => setAddExpenseModal(false)}>
+                            <TouchableOpacity style={styles.cancelBtn} onPress={resetExpenseForm}>
                                <Text style={styles.cancelBtnText}>Cancel</Text>
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.saveBtn} onPress={() => handleAddExpenseToGroup()}>
-                               <Text style={styles.saveBtnText}>Add</Text>
+                               <Text style={styles.saveBtnText}>{editingExpense ? 'Update' : 'Add'}</Text>
                             </TouchableOpacity>
                          </View>
                       </View>
@@ -348,11 +506,16 @@ const styles = StyleSheet.create({
   modalTitle: { color: '#fff', fontSize: 24, fontWeight: '800', flex: 1, textAlign: 'center' },
   modalAddBtn: { backgroundColor: '#6366F1', paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14 },
   addExpBtnText: { color: '#fff', fontWeight: '800', fontSize: 14 },
-  sectionTitle: { color: '#fff', fontSize: 22, fontWeight: '800', marginTop: 32, marginBottom: 16, letterSpacing: -0.5 },
+  sectionHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16 },
+  sectionTitle: { color: '#fff', fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
+  reportBtn: { backgroundColor: '#6366F120', paddingHorizontal: 12, paddingVertical: 6, borderRadius: 8, borderWidth: 1, borderColor: '#6366F140' },
+  reportBtnText: { color: '#6366F1', fontWeight: '700', fontSize: 14 },
   balanceCard: { backgroundColor: '#18181B', padding: 20, borderRadius: 28, borderWidth: 1, borderColor: '#27272A' },
   memberBalanceItem: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 18, borderBottomWidth: 1, borderBottomColor: '#27272A50' },
   mName: { color: '#fff', fontSize: 20, fontWeight: '700' },
-  mBalance: { fontWeight: '600', fontSize: 16, marginTop: 6 },
+  mSpent: { color: '#71717A', fontSize: 12, marginTop: 2, fontWeight: '600' },
+  mBalance: { fontWeight: '600', fontSize: 18, marginTop: 6 },
+  mBalanceLabel: { fontSize: 12, fontWeight: '500' },
   mActions: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   settleBtn: { backgroundColor: '#10B98120', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: '#10B98140' },
   settleText: { color: '#10B981', fontWeight: '800', fontSize: 14 },

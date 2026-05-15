@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "Antigravity",
+    "name": "Spendify",
     "slug": "antigravity",
     "scheme": "antigravity",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -17,10 +17,10 @@
     ],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.antigravity.upi",
+      "bundleIdentifier": "com.spendify.upi",
       "infoPlist": {
-        "NSCameraUsageDescription": "Antigravity needs camera access to scan UPI QR codes.",
-        "NSContactsUsageDescription": "Antigravity needs contacts access to split expenses with friends."
+        "NSCameraUsageDescription": "Spendify needs camera access to scan UPI QR codes.",
+        "NSContactsUsageDescription": "Spendify needs contacts access to split expenses with friends."
       }
     },
     "android": {
@@ -28,14 +28,15 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0F"
       },
-      "package": "com.antigravity.upi",
-      "versionCode": 1,
+      "package": "com.spendify.upi",
+      "versionCode": 2,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_CONTACTS",
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.SCHEDULE_EXACT_ALARM",
+        "android.permission.POST_NOTIFICATIONS",
         "android.permission.RECORD_AUDIO",
         "android.permission.WRITE_CONTACTS"
       ]
@@ -44,13 +45,21 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "Antigravity needs camera access to scan UPI QR codes."
+          "cameraPermission": "Spendify needs camera access to scan UPI QR codes."
         }
       ],
       [
         "expo-contacts",
         {
-          "contactsPermission": "Antigravity needs contacts access to split expenses with friends."
+          "contactsPermission": "Spendify needs contacts access to split expenses with friends."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#7C6AFF",
+          "sounds": []
         }
       ]
     ],

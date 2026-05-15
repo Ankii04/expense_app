@@ -10,7 +10,7 @@ const BAR_W = SCREEN_W - 120;
 
 export default function BudgetScreen() {
   const { budgets, setBudget, deleteBudget, refresh: refreshBudgets } = useBudgets();
-  const { categorySpend, refresh: refreshExpenses } = useExpenses();
+  const { categorySpend, monthTotal, refresh: refreshExpenses } = useExpenses();
   const [editCat, setEditCat] = useState(null);
   const [editAmt, setEditAmt] = useState('');
 
@@ -34,12 +34,48 @@ export default function BudgetScreen() {
   const catsWithout = CATEGORIES.filter((c) => !budgets[c.id]);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="always" showsVerticalScrollIndicator={false}>
       <Text style={styles.title}>Budgets</Text>
-      <Text style={styles.subtitle}>Monthly spending limits per category</Text>
+      <Text style={styles.subtitle}>Monthly spending limits</Text>
+
+      {/* Total Monthly Budget Card */}
+      <TouchableOpacity 
+        style={[styles.budgetCard, { borderColor: COLORS.accent + '60', backgroundColor: COLORS.accent + '08' }]} 
+        activeOpacity={0.8}
+        onPress={() => { setEditCat('total'); setEditAmt(budgets['total'] ? budgets['total'].toString() : ''); }}
+      >
+        <View style={styles.budgetHeader}>
+          <Text style={styles.budgetEmoji}>💰</Text>
+          <Text style={[styles.budgetName, { color: COLORS.accent }]}>Total Monthly Budget</Text>
+          <Text style={[styles.budgetPct, { color: COLORS.accent }]}>
+            {budgets['total'] ? Math.round(Math.min(monthTotal / budgets['total'], 1) * 100) : 0}%
+          </Text>
+        </View>
+        <View style={[styles.barBg, { backgroundColor: COLORS.accent + '20' }]}>
+          <View 
+            style={[
+              styles.barFill, 
+              { 
+                width: `${budgets['total'] ? Math.min(monthTotal / budgets['total'], 1) * 100 : 0}%`, 
+                backgroundColor: COLORS.accent 
+              }
+            ]} 
+          />
+        </View>
+        <View style={styles.budgetFooter}>
+          <Text style={styles.budgetSpent}>{formatCurrency(monthTotal)} spent overall</Text>
+          <Text style={styles.budgetLimit}>
+            {budgets['total'] ? `Limit: ${formatCurrency(budgets['total'])}` : 'Set limit'}
+          </Text>
+        </View>
+      </TouchableOpacity>
+
+      <View style={styles.divider} />
+
+      <Text style={styles.sectionTitle}>Category Budgets</Text>
 
       {/* Active budgets */}
-      {catsWithBudget.map((cat) => {
+      {catsWithBudget.filter(c => c.id !== 'total').map((cat) => {
         const budget = budgets[cat.id];
         const spent = categorySpend[cat.id] || 0;
         const pct = budget > 0 ? Math.min(spent / budget, 1) : 0;
@@ -47,7 +83,13 @@ export default function BudgetScreen() {
         const barColor = over80 ? COLORS.red : cat.color;
 
         return (
-          <TouchableOpacity key={cat.id} style={styles.budgetCard} activeOpacity={0.8} onLongPress={() => handleDelete(cat.id)}>
+          <TouchableOpacity 
+            key={cat.id} 
+            style={styles.budgetCard} 
+            activeOpacity={0.8} 
+            onPress={() => { setEditCat(cat.id); setEditAmt(budget.toString()); }}
+            onLongPress={() => handleDelete(cat.id)}
+          >
             <View style={styles.budgetHeader}>
               <Text style={styles.budgetEmoji}>{cat.emoji}</Text>
               <Text style={styles.budgetName}>{cat.name}</Text>
@@ -77,7 +119,9 @@ export default function BudgetScreen() {
       <Text style={styles.addTitle}>Add Budget</Text>
       {editCat ? (
         <View style={styles.editCard}>
-          <Text style={styles.editLabel}>{getCategoryById(editCat).emoji} {getCategoryById(editCat).name}</Text>
+          <Text style={styles.editLabel}>
+            {editCat === 'total' ? '💰 Total Monthly Budget' : `${getCategoryById(editCat).emoji} ${getCategoryById(editCat).name}`}
+          </Text>
           <TextInput style={styles.editInput} placeholder="Monthly limit (₹)" placeholderTextColor={COLORS.textMuted} value={editAmt} onChangeText={setEditAmt} keyboardType="numeric" autoFocus />
           <View style={styles.editBtns}>
             <TouchableOpacity style={styles.cancelBtn} onPress={() => { setEditCat(null); setEditAmt(''); }}>
@@ -135,4 +179,6 @@ const styles = StyleSheet.create({
   catGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   catChip: { flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.full, paddingHorizontal: 16, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border, gap: 6 },
   catChipText: { color: COLORS.textSecondary, fontSize: FONT_SIZE.sm, fontWeight: '500' },
+  divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 24, opacity: 0.5 },
+  sectionTitle: { color: COLORS.textMuted, fontSize: FONT_SIZE.xs, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 16 },
 });

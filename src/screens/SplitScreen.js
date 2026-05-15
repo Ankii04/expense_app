@@ -94,7 +94,7 @@ export default function SplitScreen() {
 
   if (creating) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
         <Text style={styles.title}>New Split</Text>
 
         <Text style={styles.label}>Title</Text>

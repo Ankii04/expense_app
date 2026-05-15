@@ -3,17 +3,26 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import * as Linking from 'expo-linking';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS, UPI_APPS } from '../utils/theme';
 
-export default function UPIAppChooser({ upiId, payeeName, amount, note, onAppSelected }) {
+export default function UPIAppChooser({ upiId, payeeName, amount, note, allParams = {}, onAppSelected }) {
   const handlePress = async (app) => {
-    const params = new URLSearchParams({
-      pa: upiId,
-      pn: payeeName || '',
-      am: String(amount || 0),
-      cu: 'INR',
-      tn: note || '',
-    });
+    const queryParams = { ...allParams };
+    queryParams.pa = upiId;
+    if (payeeName) queryParams.pn = payeeName;
+    if (amount) queryParams.am = String(amount);
+    if (note) queryParams.tn = note;
+    if (!queryParams.cu) queryParams.cu = 'INR';
 
-    const url = `${app.scheme}?${params.toString()}`;
+    const query = Object.keys(queryParams)
+      .filter(key => queryParams[key] !== undefined && queryParams[key] !== null)
+      .map(key => `${keyResource(key)}=${encodeURIComponent(queryParams[key])}`)
+      .join('&');
+
+    function keyResource(k) {
+      const mapping = { pa: 'pa', pn: 'pn', am: 'am', tn: 'tn', mc: 'mc', tr: 'tr', cu: 'cu', mode: 'mode', orgid: 'orgid', sign: 'sign' };
+      return mapping[k.toLowerCase()] || k;
+    }
+
+    const url = `${app.scheme}?${query}`;
 
     try {
       const supported = await Linking.canOpenURL(url);
@@ -21,13 +30,13 @@ export default function UPIAppChooser({ upiId, payeeName, amount, note, onAppSel
         await Linking.openURL(url);
       } else {
         // Fallback to generic upi:// intent
-        const fallback = `upi://pay?${params.toString()}`;
+        const fallback = `upi://pay?${query}`;
         await Linking.openURL(fallback);
       }
     } catch (e) {
       // Fallback to generic upi:// intent
       try {
-        const fallback = `upi://pay?${params.toString()}`;
+        const fallback = `upi://pay?${query}`;
         await Linking.openURL(fallback);
       } catch {
         console.warn('Cannot open UPI app:', e);

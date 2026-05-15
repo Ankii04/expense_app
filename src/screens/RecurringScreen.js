@@ -63,7 +63,7 @@ export default function RecurringScreen() {
 
   if (creating) {
     return (
-      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <ScrollView style={styles.container} contentContainerStyle={styles.content} keyboardShouldPersistTaps="always">
         <Text style={styles.title}>New Recurring</Text>
 
         <Text style={styles.label}>Name</Text>

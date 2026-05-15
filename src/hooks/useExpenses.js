@@ -3,6 +3,7 @@ import {
   getExpenses,
   addExpense as storeAdd,
   deleteExpense as storeDel,
+  updateExpense as storeUpdateExpense,
   getExpensesByMonth,
   getExpensesByCategory,
   getMonthTotal,
@@ -21,6 +22,12 @@ import {
   addGroup as storeAddGroup,
   updateGroup as storeUpdateGroup,
   deleteGroup as storeDelGroup,
+  getLends,
+  addLend as storeAddLend,
+  updateLend as storeUpdateLend,
+  deleteLend as storeDelLend,
+  getProfile,
+  setProfile as storeSetProfile,
 } from '../store/expenseStore';
 import { getMonthKey } from '../utils/theme';
 
@@ -78,6 +85,13 @@ export function useExpenses() {
     refresh,
     addExpense,
     deleteExpense,
+    updateExpense: useCallback(
+      async (id, updates) => {
+        await storeUpdateExpense(id, updates);
+        await refresh();
+      },
+      [refresh],
+    ),
   };
 }
 
@@ -242,4 +256,93 @@ export function useRecurring() {
   );
 
   return { recurring, loading, refresh, addRecurring, updateRecurring, deleteRecurring };
+}
+
+export function useLends() {
+  const [lends, setLends] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const l = await getLends();
+    setLends(l);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const addLend = useCallback(
+    async (lend) => {
+      const entry = await storeAddLend(lend);
+      await refresh();
+      return entry;
+    },
+    [refresh],
+  );
+
+  const updateLend = useCallback(
+    async (id, updates) => {
+      await storeUpdateLend(id, updates);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  const deleteLend = useCallback(
+    async (id) => {
+      await storeDelLend(id);
+      await refresh();
+    },
+    [refresh],
+  );
+
+  // Aggregate: per-contact lent/borrowed totals
+  const contactSummaries = lends.reduce((acc, l) => {
+    const key = l.contactPhone || l.contactName;
+    if (!acc[key]) {
+      acc[key] = {
+        contactName: l.contactName,
+        contactPhone: l.contactPhone,
+        lent: 0,
+        borrowed: 0,
+        records: [],
+      };
+    }
+    if (l.type === 'lend') acc[key].lent += l.paid ? 0 : l.amount;
+    else acc[key].borrowed += l.paid ? 0 : l.amount;
+    acc[key].records.push(l);
+    return acc;
+  }, {});
+
+  return {
+    lends,
+    contactSummaries: Object.values(contactSummaries),
+    loading,
+    refresh,
+    addLend,
+    updateLend,
+    deleteLend,
+  };
+}
+
+export function useProfile() {
+  const [profile, setProfileState] = useState({ name: 'User' });
+
+  const refresh = useCallback(async () => {
+    const p = await getProfile();
+    setProfileState(p);
+  }, []);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const saveProfile = useCallback(async (data) => {
+    await storeSetProfile(data);
+    setProfileState(data);
+  }, []);
+
+  return { profile, saveProfile, refresh };
 }

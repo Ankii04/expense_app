@@ -1,48 +1,82 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View, Text, StyleSheet, TouchableOpacity,
+  Dimensions, Alert, ActivityIndicator,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as ImagePicker from 'expo-image-picker';
 import RNQRGenerator from 'rn-qr-generator';
-import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS } from '../utils/theme';
+import { COLORS, FONT_SIZE, BORDER_RADIUS } from '../utils/theme';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const FINDER_SIZE = SCREEN_W * 0.7;
+const FINDER_SIZE = SCREEN_W * 0.68;
+
+const parseUPIData = (data) => {
+  try {
+    if (!data?.toLowerCase().startsWith('upi://pay')) return null;
+    const qi = data.indexOf('?');
+    if (qi === -1) return null;
+
+    const rawQueryString = data.substring(qi + 1);
+    const params = {};
+    for (const pair of rawQueryString.split('&')) {
+      const ei = pair.indexOf('=');
+      if (ei !== -1) {
+        params[pair.substring(0, ei).toLowerCase()] = pair.substring(ei + 1);
+      }
+    }
+    return {
+      upiId:        params.pa  ? decodeURIComponent(params.pa)  : '',
+      payeeName:    params.pn  ? decodeURIComponent(params.pn)  : '',
+      amount:       params.am  ? decodeURIComponent(params.am)  : '',
+      note:         params.tn  ? decodeURIComponent(params.tn)  : '',
+      rawQueryString,
+    };
+  } catch { return null; }
+};
 
 export default function ScanScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
-  const [scanned, setScanned] = useState(false);
+  const [scanned, setScanned]         = useState(false);
+  const [scanning, setScanning]       = useState(false); // gallery loading indicator
+  const processingRef = useRef(false);                   // debounce rapid duplicate scans
 
-  const parseUPIData = (data) => {
-    try {
-      const lower = data.toLowerCase();
-      if (!lower.startsWith('upi://pay')) return null;
-      const url = new URL(data);
-      const p = url.searchParams;
-      return { upiId: p.get('pa') || '', payeeName: p.get('pn') || '', amount: p.get('am') || '', note: p.get('tn') || '' };
-    } catch {
-      const m = data.match(/pa=([^&]+)/i);
-      if (m) {
-        const pn = data.match(/pn=([^&]+)/i);
-        const am = data.match(/am=([^&]+)/i);
-        const tn = data.match(/tn=([^&]+)/i);
-        return { upiId: decodeURIComponent(m[1]), payeeName: pn ? decodeURIComponent(pn[1]) : '', amount: am ? am[1] : '', note: tn ? decodeURIComponent(tn[1]) : '' };
-      }
-      return null;
-    }
-  };
+  // Reset scanned state when the tab is focused
+  useEffect(() => {
+    const unsub = navigation.addListener('focus', () => {
+      setScanned(false);
+      processingRef.current = false;
+    });
+    return unsub;
+  }, [navigation]);
 
-  const handleBarCodeScanned = ({ data }) => {
-    if (scanned) return;
-    setScanned(true);
+  const handleResult = (data) => {
     const parsed = parseUPIData(data);
-    if (parsed && parsed.upiId) {
+    if (parsed?.upiId) {
       navigation.navigate('Pay', parsed);
     } else {
-      Alert.alert('Invalid QR', 'This is not a valid UPI QR code.');
-      setTimeout(() => setScanned(false), 2000);
+      Alert.alert('Invalid QR', 'This is not a valid UPI QR code.', [
+        { text: 'OK', onPress: () => { setScanned(false); processingRef.current = false; } },
+      ]);
     }
   };
 
+  /**
+   * Camera handler — called for every frame that contains a barcode.
+   * We use a ref-based gate (processingRef) instead of setState to avoid
+   * the React re-render lag that caused "double-scan" or slow detection.
+   */
+  const handleBarCodeScanned = ({ data }) => {
+    if (processingRef.current) return;
+    processingRef.current = true;
+    setScanned(true);
+    handleResult(data);
+  };
+
+  /**
+   * Gallery scan — shows loading indicator immediately so the user knows
+   * something is happening (rn-qr-generator can take 200-600ms on large images).
+   */
   const handleGalleryScan = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
@@ -53,36 +87,33 @@ export default function ScanScreen({ navigation }) {
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
       allowsEditing: false,
+      quality: 0.5,
     });
 
-    if (!result.canceled && result.assets && result.assets[0].uri) {
-      try {
-        const response = await RNQRGenerator.detect({
-          uri: result.assets[0].uri,
-        });
+    if (result.canceled || !result.assets?.[0]?.uri) return;
 
-        if (response.values && response.values.length > 0) {
-          const parsed = parseUPIData(response.values[0]);
-          if (parsed && parsed.upiId) {
-            navigation.navigate('Pay', parsed);
-          } else {
-            Alert.alert('Invalid QR', 'No valid UPI data found in this image.');
-          }
-        } else {
-          Alert.alert('Scan Failed', 'Could not detect a QR code in this image.');
-        }
-      } catch (err) {
-        Alert.alert('Error', 'Something went wrong while scanning the image.');
+    setScanning(true);
+    try {
+      const response = await RNQRGenerator.detect({ uri: result.assets[0].uri });
+      setScanning(false);
+      if (response?.values?.length > 0) {
+        handleResult(response.values[0]);
+      } else {
+        Alert.alert('No QR Found', 'Could not detect a QR code in this image. Try a clearer photo.');
       }
+    } catch {
+      setScanning(false);
+      Alert.alert('Scan Error', 'Something went wrong scanning the image.');
     }
   };
 
-  useEffect(() => {
-    const unsub = navigation.addListener('focus', () => setScanned(false));
-    return unsub;
-  }, [navigation]);
-
-  if (!permission) return <View style={styles.container}><Text style={styles.msg}>Requesting camera...</Text></View>;
+  if (!permission) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator color={COLORS.accent} size="large" />
+      </View>
+    );
+  }
 
   if (!permission.granted) {
     return (
@@ -91,7 +122,7 @@ export default function ScanScreen({ navigation }) {
           <Text style={{ fontSize: 48, marginBottom: 16 }}>📷</Text>
           <Text style={styles.permTitle}>Camera Access Needed</Text>
           <Text style={styles.permSub}>We need camera access to scan UPI QR codes</Text>
-          <TouchableOpacity style={styles.permBtn} onPress={requestPermission}>
+          <TouchableOpacity style={styles.permBtn} onPress={requestPermission} activeOpacity={0.8}>
             <Text style={styles.permBtnText}>Grant Permission</Text>
           </TouchableOpacity>
         </View>
@@ -101,31 +132,63 @@ export default function ScanScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      <CameraView style={StyleSheet.absoluteFill} barcodeScannerSettings={{ barcodeTypes: ['qr'] }} onBarcodeScanned={scanned ? undefined : handleBarCodeScanned} />
+      {/* Camera — always mounted, feeds frames continuously for fast detection */}
+      <CameraView
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        barcodeScannerSettings={{
+          barcodeTypes: ['qr'],    // only scan QR — fastest possible mode
+        }}
+        onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+      />
+
+      {/* Overlay */}
       <View style={styles.overlay}>
-        <View style={styles.overlaySection}>
-          <Text style={styles.scanTitle}>Scan UPI QR</Text>
-          <Text style={styles.scanSub}>Point camera at a UPI QR code</Text>
+        {/* Top dim */}
+        <View style={styles.dimRow}>
+          <View style={[styles.dim, { flex: 1 }]} />
         </View>
+        <Text style={styles.scanTitle}>Scan UPI QR</Text>
+        <Text style={styles.scanSub}>Point camera at a QR code</Text>
+
+        {/* Middle row: dim | finder | dim */}
         <View style={styles.finderRow}>
-          <View style={styles.overlayFill} />
+          <View style={styles.dim} />
           <View style={styles.finder}>
             <View style={[styles.corner, styles.tl]} />
             <View style={[styles.corner, styles.tr]} />
             <View style={[styles.corner, styles.bl]} />
             <View style={[styles.corner, styles.br]} />
+            {scanned && (
+              <View style={styles.scanFlash} />
+            )}
           </View>
-          <View style={styles.overlayFill} />
+          <View style={styles.dim} />
         </View>
-        <View style={[styles.overlaySection, { paddingBottom: 100 }]}>
-          <View style={styles.actionRow}>
-            <TouchableOpacity style={styles.galleryBtn} onPress={handleGalleryScan}>
-              <Text style={styles.galleryBtnText}>🖼️ Gallery</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.manualBtn} onPress={() => navigation.navigate('Pay', { upiId: '', payeeName: '', amount: '', note: '' })}>
-              <Text style={styles.manualBtnText}>Enter UPI ID</Text>
-            </TouchableOpacity>
-          </View>
+
+        {/* Bottom area */}
+        <View style={styles.bottomArea}>
+          {scanning ? (
+            <View style={styles.scanningIndicator}>
+              <ActivityIndicator color="#fff" size="small" />
+              <Text style={styles.scanningText}>Scanning image…</Text>
+            </View>
+          ) : (
+            <View style={styles.actionRow}>
+              <TouchableOpacity style={styles.galleryBtn} onPress={handleGalleryScan} activeOpacity={0.8}>
+                <Text style={styles.galleryBtnText}>🖼️  Gallery</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.manualBtn}
+                onPress={() => navigation.navigate('Pay', {
+                  upiId: '', payeeName: '', amount: '', note: '', rawQueryString: '',
+                })}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.manualBtnText}>Enter UPI ID</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       </View>
     </View>
@@ -133,28 +196,48 @@ export default function ScanScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' },
-  msg: { color: COLORS.textSecondary, fontSize: FONT_SIZE.md },
-  permCard: { backgroundColor: COLORS.card, borderRadius: BORDER_RADIUS.xl, padding: 32, alignItems: 'center', marginHorizontal: 24, borderWidth: 1, borderColor: COLORS.border },
-  permTitle: { color: COLORS.textPrimary, fontSize: FONT_SIZE.xl, fontWeight: '700', marginBottom: 8 },
-  permSub: { color: COLORS.textSecondary, fontSize: FONT_SIZE.md, textAlign: 'center', marginBottom: 24 },
-  permBtn: { backgroundColor: COLORS.accent, borderRadius: BORDER_RADIUS.md, paddingHorizontal: 24, paddingVertical: 12 },
-  permBtnText: { color: '#fff', fontSize: FONT_SIZE.md, fontWeight: '700' },
-  overlay: { ...StyleSheet.absoluteFillObject, justifyContent: 'space-between' },
-  overlaySection: { backgroundColor: 'rgba(10,10,15,0.8)', alignItems: 'center', justifyContent: 'center', paddingVertical: 40, flex: 1 },
-  overlayFill: { flex: 1, backgroundColor: 'rgba(10,10,15,0.8)' },
+  container: { flex: 1, backgroundColor: '#0A0A0F', justifyContent: 'center', alignItems: 'center' },
+
+  permCard: { backgroundColor: '#18181B', borderRadius: 24, padding: 32, alignItems: 'center', marginHorizontal: 24, borderWidth: 1, borderColor: '#27272A' },
+  permTitle: { color: '#fff', fontSize: 20, fontWeight: '700', marginBottom: 8, textAlign: 'center' },
+  permSub:   { color: COLORS.textMuted, fontSize: 14, textAlign: 'center', marginBottom: 24 },
+  permBtn:   { backgroundColor: COLORS.accent, borderRadius: 14, paddingHorizontal: 28, paddingVertical: 14 },
+  permBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+
+  overlay: { ...StyleSheet.absoluteFillObject },
+
+  dimRow: { paddingTop: 56, alignItems: 'center' },
+  dim: { backgroundColor: 'rgba(10,10,15,0.72)' },
+  scanTitle: { color: '#fff', fontSize: 22, fontWeight: '800', textAlign: 'center', marginTop: 16, marginBottom: 4, backgroundColor: 'rgba(10,10,15,0.72)' },
+  scanSub:   { color: COLORS.textSecondary, fontSize: 14, textAlign: 'center', backgroundColor: 'rgba(10,10,15,0.72)', paddingBottom: 8 },
+
   finderRow: { flexDirection: 'row', height: FINDER_SIZE },
-  finder: { width: FINDER_SIZE, height: FINDER_SIZE },
-  scanTitle: { color: COLORS.textPrimary, fontSize: FONT_SIZE.xxl, fontWeight: '800', marginBottom: 8 },
-  scanSub: { color: COLORS.textSecondary, fontSize: FONT_SIZE.md },
-  corner: { position: 'absolute', width: 24, height: 24, borderColor: COLORS.accent },
-  tl: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 8 },
-  tr: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 8 },
-  bl: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 8 },
-  br: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 8 },
-  manualBtn: { flex: 1, backgroundColor: COLORS.elevated, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 14, borderWidth: 1, borderColor: COLORS.borderLight, alignItems: 'center' },
-  manualBtnText: { color: COLORS.accent, fontSize: FONT_SIZE.md, fontWeight: '700' },
-  actionRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 12 },
-  galleryBtn: { flex: 1, backgroundColor: COLORS.accent, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 14, alignItems: 'center' },
-  galleryBtnText: { color: '#fff', fontSize: FONT_SIZE.md, fontWeight: '700' },
+  finder: {
+    width: FINDER_SIZE, height: FINDER_SIZE,
+    position: 'relative',
+  },
+
+  corner: { position: 'absolute', width: 28, height: 28, borderColor: COLORS.accent },
+  tl: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3,  borderTopLeftRadius:  8 },
+  tr: { top: 0, right:0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 8 },
+  bl: { bottom:0, left: 0, borderBottomWidth:3, borderLeftWidth: 3,  borderBottomLeftRadius:  8 },
+  br: { bottom:0, right:0, borderBottomWidth:3, borderRightWidth: 3, borderBottomRightRadius: 8 },
+
+  scanFlash: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(124,106,255,0.15)', borderRadius: 4 },
+
+  bottomArea: {
+    flex: 1,
+    backgroundColor: 'rgba(10,10,15,0.72)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingBottom: 80,
+  },
+  actionRow: { flexDirection: 'row', gap: 12, paddingHorizontal: 24 },
+  galleryBtn: { flex: 1, backgroundColor: COLORS.accent, borderRadius: 999, paddingVertical: 14, alignItems: 'center' },
+  galleryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700' },
+  manualBtn: { flex: 1, backgroundColor: '#18181B', borderRadius: 999, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#3F3F46' },
+  manualBtnText: { color: COLORS.accent, fontSize: 15, fontWeight: '700' },
+
+  scanningIndicator: { flexDirection: 'row', alignItems: 'center', gap: 10, backgroundColor: '#18181B', padding: 16, borderRadius: 16 },
+  scanningText: { color: '#fff', fontWeight: '600', fontSize: 14 },
 });
