@@ -82,7 +82,11 @@ export const getCategoryById = (id) => {
 
 export const formatCurrency = (amount) => {
   const num = Number(amount) || 0;
-  return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  try {
+    return '₹' + num.toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  } catch (e) {
+    return '₹' + num.toFixed(2);
+  }
 };
 
 // Safe version for HTML injection (avoids WebView rendering issues)
@@ -92,21 +96,25 @@ export const formatCurrencyHTML = (amount) => {
 };
 
 export const formatDate = (dateStr) => {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diff = now - d;
-  const mins = Math.floor(diff / 60000);
-  const hrs = Math.floor(diff / 3600000);
+  try {
+    const d = new Date(dateStr);
+    const now = new Date();
+    const diff = now - d;
+    const mins = Math.floor(diff / 60000);
+    const hrs = Math.floor(diff / 3600000);
 
-  if (mins < 1) return 'Just now';
-  if (mins < 60) return `${mins}m ago`;
-  if (hrs < 24) return `${hrs}h ago`;
+    if (mins < 1) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (hrs < 24) return `${hrs}h ago`;
 
-  return d.toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
-  });
+    return d.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: d.getFullYear() !== now.getFullYear() ? 'numeric' : undefined,
+    });
+  } catch (e) {
+    return String(dateStr).split('T')[0] || '';
+  }
 };
 
 export const getMonthKey = (date) => {

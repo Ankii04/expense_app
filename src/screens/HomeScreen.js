@@ -14,16 +14,29 @@ import { useExpenses, useBudgets, useLends, useProfile } from '../hooks/useExpen
 import ExpenseCard from '../components/ExpenseCard';
 import { scheduleMonthlySummaryNotification } from '../utils/notifications';
 
+// ─── Pie Chart Helpers (Stable definitions) ──────────────────────────
+const RADIUS = 70;
+const polarToCartesian = (cx, cy, r, deg) => {
+  const rad = ((deg - 90) * Math.PI) / 180;
+  return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+};
+const describeArc = (x, y, r, start, end) => {
+  const s = polarToCartesian(x, y, r, end);
+  const e = polarToCartesian(x, y, r, start);
+  const large = (end - start) <= 180 ? '0' : '1';
+  return ['M', x, y, 'L', s.x, s.y, 'A', r, r, 0, large, 0, e.x, e.y, 'L', x, y].join(' ');
+};
+
 const SCREEN_W = Dimensions.get('window').width;
 
 export default function HomeScreen({ navigation }) {
-  const { expenses, monthTotal, categorySpend, loading, refresh, addExpense } = useExpenses();
-  const { budgets } = useBudgets();
-  const { contactSummaries } = useLends();
-  const { profile, saveProfile } = useProfile();
+  const { expenses = [], monthTotal = 0, categorySpend = {}, loading, refresh, addExpense } = useExpenses();
+  const { budgets = {} } = useBudgets();
+  const { contactSummaries = [] } = useLends();
+  const { profile = { name: 'User' }, saveProfile } = useProfile();
   const [quickText, setQuickText] = useState('');
-  const [showNameModal, setShowNameModal] = useState(false);
-  const [nameInput, setNameInput] = useState('');
+  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [nameInput, setNameInput]   = useState('');
 
   const totalBudget = budgets['total'] || Object.entries(budgets).reduce((sum, [k, v]) => k === 'total' ? sum : sum + Number(v), 0);
   const budgetProgress = totalBudget > 0 ? Math.min(monthTotal / totalBudget, 1) : 0;
@@ -56,17 +69,6 @@ export default function HomeScreen({ navigation }) {
 
   // Pie chart
   let cumulativeAngle = 0;
-  const RADIUS = 70;
-  const polarToCartesian = (cx, cy, r, deg) => {
-    const rad = ((deg - 90) * Math.PI) / 180;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
-  };
-  const describeArc = (x, y, r, start, end) => {
-    const s = polarToCartesian(x, y, r, end);
-    const e = polarToCartesian(x, y, r, start);
-    const large = end - start <= 180 ? '0' : '1';
-    return ['M', x, y, 'L', s.x, s.y, 'A', r, r, 0, large, 0, e.x, e.y, 'L', x, y].join(' ');
-  };
 
   useFocusEffect(useCallback(() => {
     refresh();
@@ -97,15 +99,8 @@ export default function HomeScreen({ navigation }) {
   };
 
   const handleAvatarPress = () => {
-    Alert.alert(
-      'Profile',
-      profile.name,
-      [
-        { text: 'Change Photo', onPress: handlePickImage },
-        { text: 'Edit Name', onPress: () => { setNameInput(profile.name); setShowNameModal(true); } },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-    );
+    setNameInput(profile.name || '');
+    setShowProfileModal(true);
   };
 
   const handlePickImage = async () => {
@@ -125,6 +120,12 @@ export default function HomeScreen({ navigation }) {
     }
   };
 
+
+  const handleSaveName = async () => {
+    if (!nameInput.trim()) return;
+    await saveProfile({ ...profile, name: nameInput.trim() });
+    setShowProfileModal(false);
+  };
 
   const monthName = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
   const recentExpenses = expenses.slice(0, 5);
@@ -199,11 +200,11 @@ export default function HomeScreen({ navigation }) {
 
         {/* ─── Lent / Borrowed Row ────────────── */}
         <View style={styles.lendRow}>
-          <TouchableOpacity style={styles.lendCard} onPress={() => navigation.navigate('Lend')} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.lendCard} onPress={() => navigation.navigate('LendMain')} activeOpacity={0.85}>
             <Text style={styles.lendLabel}>LENT OUT</Text>
             <Text style={[styles.lendValue, { color: COLORS.green }]}>{formatCurrency(totalLentOut)}</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.lendCard} onPress={() => navigation.navigate('Lend')} activeOpacity={0.85}>
+          <TouchableOpacity style={styles.lendCard} onPress={() => navigation.navigate('LendMain')} activeOpacity={0.85}>
             <Text style={styles.lendLabel}>BORROWED</Text>
             <Text style={[styles.lendValue, { color: COLORS.red }]}>{formatCurrency(totalBorrowed)}</Text>
           </TouchableOpacity>
@@ -259,6 +260,7 @@ export default function HomeScreen({ navigation }) {
                 <View style={styles.pieContainer}>
                   <Svg width={140} height={140}>
                     <G>
+                      {(() => { cumulativeAngle = 0; return null; })()}
                       {chartData.map((cat) => {
                         const pct = cat.amount / monthTotal;
                         const angle = pct * 360;
@@ -317,29 +319,72 @@ export default function HomeScreen({ navigation }) {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* ─── Edit Name Modal ─────────────────── */}
-      <Modal visible={showNameModal} transparent animationType="fade" onRequestClose={() => setShowNameModal(false)}>
+      {/* ─── Profile Bottom Sheet ─────────────── */}
+      <Modal visible={showProfileModal} transparent animationType="slide" onRequestClose={() => setShowProfileModal(false)}>
         <View style={styles.modalOverlay}>
-          <View style={styles.nameModal}>
-            <Text style={styles.nameModalTitle}>Your Name</Text>
-            <Text style={styles.nameModalSub}>This appears on your home screen</Text>
-            <TextInput
-              style={styles.nameInput}
-              placeholder="Enter your name"
-              placeholderTextColor={COLORS.textMuted}
-              value={nameInput}
-              onChangeText={setNameInput}
-              autoFocus
-              maxLength={30}
-            />
-            <View style={styles.nameModalBtns}>
-              <TouchableOpacity style={styles.nameCancel} onPress={() => setShowNameModal(false)}>
-                <Text style={styles.nameCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={styles.nameSave} onPress={handleSaveName}>
-                <Text style={styles.nameSaveText}>Save</Text>
+          <View style={styles.profileSheet}>
+
+            {/* Handle */}
+            <View style={styles.sheetHandle} />
+
+            <Text style={styles.sheetTitle}>Your Profile</Text>
+
+            {/* Avatar preview */}
+            <View style={styles.profileAvatarWrap}>
+              {profile.photo ? (
+                <Image source={{ uri: profile.photo }} style={styles.profileAvatarImg} />
+              ) : (
+                <View style={styles.profileAvatarPlaceholder}>
+                  <Text style={styles.profileAvatarLetter}>
+                    {(nameInput || profile.name || 'U')[0].toUpperCase()}
+                  </Text>
+                </View>
+              )}
+              {/* Photo button overlay */}
+              <TouchableOpacity
+                style={styles.photoOverlay}
+                onPress={async () => { await handlePickImage(); }}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.photoOverlayText}>📷</Text>
               </TouchableOpacity>
             </View>
+
+            <Text style={styles.photoHint}>Tap avatar to change photo</Text>
+
+            {/* Name input */}
+            <Text style={styles.fieldLabel}>Display Name</Text>
+            <View style={styles.nameInputWrap}>
+              <Text style={styles.nameInputIcon}>✏️</Text>
+              <TextInput
+                style={styles.nameInputField}
+                placeholder="Enter your name"
+                placeholderTextColor={COLORS.textMuted}
+                value={nameInput}
+                onChangeText={setNameInput}
+                autoFocus
+                maxLength={30}
+                returnKeyType="done"
+                onSubmitEditing={handleSaveName}
+              />
+              <Text style={styles.charCount}>{nameInput.length}/30</Text>
+            </View>
+
+            {/* Actions */}
+            <View style={styles.profileBtns}>
+              <TouchableOpacity style={styles.profileCancel} onPress={() => setShowProfileModal(false)} activeOpacity={0.8}>
+                <Text style={styles.profileCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.profileSave, !nameInput.trim() && { opacity: 0.4 }]}
+                onPress={handleSaveName}
+                disabled={!nameInput.trim()}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.profileSaveText}>Save Changes</Text>
+              </TouchableOpacity>
+            </View>
+
           </View>
         </View>
       </Modal>
@@ -441,15 +486,72 @@ const styles = StyleSheet.create({
   emptyTitle: { color: COLORS.textPrimary, fontSize: FONT_SIZE.lg, fontWeight: '700' },
   emptySub: { color: COLORS.textMuted, fontSize: FONT_SIZE.sm, marginTop: SPACING.xs, textAlign: 'center' },
 
-  // Name modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'center', padding: 24 },
-  nameModal: { backgroundColor: '#18181B', borderRadius: 24, padding: 28, borderWidth: 1, borderColor: '#3F3F46' },
-  nameModalTitle: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 4 },
-  nameModalSub: { color: COLORS.textMuted, fontSize: 13, marginBottom: 20 },
-  nameInput: { backgroundColor: '#27272A', borderRadius: 14, padding: 16, color: '#fff', fontSize: 18, fontWeight: '600', borderWidth: 1, borderColor: '#3F3F46', marginBottom: 20 },
-  nameModalBtns: { flexDirection: 'row', gap: 12, justifyContent: 'flex-end' },
-  nameCancel: { paddingHorizontal: 20, paddingVertical: 12, borderRadius: 12, backgroundColor: '#27272A' },
-  nameCancelText: { color: COLORS.textMuted, fontWeight: '700' },
-  nameSave: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 12, backgroundColor: COLORS.accent },
-  nameSaveText: { color: '#fff', fontWeight: '800' },
+  // Name modal (legacy, kept for compatibility)
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+
+  // ── Profile bottom sheet ──────────────────────────────────────
+  profileSheet: {
+    backgroundColor: '#13131A',
+    borderTopLeftRadius: 32, borderTopRightRadius: 32,
+    paddingHorizontal: 24, paddingBottom: 44, paddingTop: 12,
+    borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.08)',
+  },
+  sheetHandle: {
+    width: 40, height: 4, borderRadius: 2, backgroundColor: '#3F3F46',
+    alignSelf: 'center', marginBottom: 24,
+  },
+  sheetTitle: { color: '#fff', fontSize: 22, fontWeight: '800', marginBottom: 24, textAlign: 'center' },
+
+  // Avatar preview
+  profileAvatarWrap: {
+    width: 100, height: 100, borderRadius: 50, alignSelf: 'center',
+    marginBottom: 8, position: 'relative',
+  },
+  profileAvatarImg: { width: 100, height: 100, borderRadius: 50 },
+  profileAvatarPlaceholder: {
+    width: 100, height: 100, borderRadius: 50,
+    backgroundColor: COLORS.accent + '30',
+    borderWidth: 3, borderColor: COLORS.accent + '60',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  profileAvatarLetter: { color: COLORS.accent, fontSize: 40, fontWeight: '800' },
+  photoOverlay: {
+    position: 'absolute', bottom: 0, right: 0,
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: COLORS.accent,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 2, borderColor: '#13131A',
+  },
+  photoOverlayText: { fontSize: 14 },
+  photoHint: { color: COLORS.textMuted, fontSize: 11, textAlign: 'center', marginBottom: 24 },
+
+  // Name input
+  fieldLabel: {
+    color: COLORS.textMuted, fontSize: 11, fontWeight: '700',
+    textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8,
+  },
+  nameInputWrap: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#1C1C28', borderRadius: 16,
+    paddingHorizontal: 14, paddingVertical: 4,
+    borderWidth: 1, borderColor: COLORS.accent + '40',
+    marginBottom: 28, gap: 10,
+  },
+  nameInputIcon: { fontSize: 16 },
+  nameInputField: { flex: 1, color: '#fff', fontSize: 17, fontWeight: '600', paddingVertical: 14 },
+  charCount: { color: COLORS.textMuted, fontSize: 11 },
+
+  // Buttons
+  profileBtns: { flexDirection: 'row', gap: 12 },
+  profileCancel: {
+    flex: 1, paddingVertical: 15, borderRadius: 16,
+    backgroundColor: '#27272A', alignItems: 'center',
+    borderWidth: 1, borderColor: '#3F3F46',
+  },
+  profileCancelText: { color: COLORS.textMuted, fontWeight: '700', fontSize: 15 },
+  profileSave: {
+    flex: 2, paddingVertical: 15, borderRadius: 16,
+    backgroundColor: COLORS.accent, alignItems: 'center',
+  },
+  profileSaveText: { color: '#fff', fontWeight: '800', fontSize: 15 },
 });

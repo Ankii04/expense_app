@@ -332,7 +332,11 @@ export function useProfile() {
 
   const refresh = useCallback(async () => {
     const p = await getProfile();
-    setProfileState(p);
+    if (p && !Array.isArray(p)) {
+      setProfileState(p);
+    } else {
+      setProfileState({ name: 'User' });
+    }
   }, []);
 
   useEffect(() => {

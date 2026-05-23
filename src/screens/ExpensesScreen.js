@@ -22,6 +22,8 @@ export default function ExpensesScreen() {
   // Group split state
   const [splitGroupId, setSplitGroupId] = useState(null);
   const [selectedMembers, setSelectedMembers] = useState([]); // Array of phones
+  const [splitType, setSplitType] = useState('equal'); // 'equal' or 'custom'
+  const [customShares, setCustomShares] = useState({}); // phone -> amount string
 
   useFocusEffect(useCallback(() => { refresh(); refreshGroups(); }, [refresh, refreshGroups]));
 
@@ -48,6 +50,53 @@ export default function ExpensesScreen() {
     setShowAddModal(true);
   };
 
+  const recalculateBalances = (members, expenses) => {
+    const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
+    expenses.forEach(exp => {
+      const amount = Number(exp.amount);
+      
+      if (exp.shares) {
+        newMembers.forEach(m => {
+          const share = exp.shares[m.phone] || 0;
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - share);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= share;
+          }
+        });
+      } else if (exp.splitMembers && exp.splitMembers.length > 0) {
+        const payerInSplit = exp.splitMembers.includes(exp.payerPhone);
+        const divisor = exp.splitMembers.length + (payerInSplit ? 0 : 1);
+        const perPerson = amount / divisor;
+        
+        newMembers.forEach(m => {
+          const isInSplit = exp.splitMembers.includes(m.phone);
+          const isPayer = m.phone === exp.payerPhone;
+          
+          if (isPayer) {
+            const payerShare = payerInSplit ? perPerson : 0;
+            m.balance += (amount - payerShare);
+            m.totalSpent += amount;
+          } else if (isInSplit) {
+            m.balance -= perPerson;
+          }
+        });
+      } else {
+        const perPerson = amount / members.length;
+        newMembers.forEach(m => {
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - perPerson);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= perPerson;
+          }
+        });
+      }
+    });
+    return newMembers;
+  };
+
   const handleSaveExpense = async () => {
     if (!amount || Number(amount) <= 0) {
       Alert.alert('Invalid Amount', 'Please enter a valid amount');
@@ -56,6 +105,11 @@ export default function ExpensesScreen() {
 
     const expAmount = Number(amount);
     const expNote = note || 'Manual Entry';
+
+    if (splitGroupId && splitType === 'custom' && selfShare < 0) {
+      Alert.alert('Invalid Splits', 'Sum of custom shares exceeds total amount!');
+      return;
+    }
 
     if (editingExpense) {
       // Update existing
@@ -79,23 +133,34 @@ export default function ExpensesScreen() {
       if (splitGroupId && selectedMembers.length > 0) {
         const group = groups.find(g => g.id === splitGroupId);
         if (group) {
-          const perPerson = expAmount / (selectedMembers.length + 1); // +1 for self
-          const updatedExpenses = [...group.expenses, {
-            id: Date.now().toString(),
-            title: expNote,
-            amount: expAmount,
-            payerPhone: 'self',
-            date: new Date().toISOString()
-          }];
+          let updatedExpenses;
+          if (splitType === 'custom') {
+            const sharesObj = {};
+            selectedMembers.forEach(phone => {
+              sharesObj[phone] = Number(customShares[phone]) || 0;
+            });
+            sharesObj['self'] = selfShare;
 
-          const updatedMembers = group.members.map(m => {
-            let newBalance = m.balance || 0;
-            if (selectedMembers.includes(m.phone)) {
-              newBalance -= perPerson;
-            }
-            return { ...m, balance: newBalance };
-          });
+            updatedExpenses = [...group.expenses, {
+              id: Date.now().toString(),
+              title: expNote,
+              amount: expAmount,
+              payerPhone: 'self',
+              shares: sharesObj,
+              date: new Date().toISOString()
+            }];
+          } else {
+            updatedExpenses = [...group.expenses, {
+              id: Date.now().toString(),
+              title: expNote,
+              amount: expAmount,
+              payerPhone: 'self',
+              splitMembers: [...selectedMembers, 'self'],
+              date: new Date().toISOString()
+            }];
+          }
 
+          const updatedMembers = recalculateBalances(group.members, updatedExpenses);
           await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
         }
       }
@@ -112,14 +177,20 @@ export default function ExpensesScreen() {
     setCategory('other');
     setSplitGroupId(null);
     setSelectedMembers([]);
+    setSplitType('equal');
+    setCustomShares({});
   };
 
   const handleToggleGroup = (groupId) => {
     if (splitGroupId === groupId) {
       setSplitGroupId(null);
       setSelectedMembers([]);
+      setSplitType('equal');
+      setCustomShares({});
     } else {
       setSplitGroupId(groupId);
+      setSplitType('equal');
+      setCustomShares({});
       const group = groups.find(g => g.id === groupId);
       if (group) {
         // Select all members except 'self' by default
@@ -131,10 +202,30 @@ export default function ExpensesScreen() {
   const toggleMember = (phone) => {
     if (selectedMembers.includes(phone)) {
       setSelectedMembers(selectedMembers.filter(p => p !== phone));
+      setCustomShares(prev => {
+        const copy = { ...prev };
+        delete copy[phone];
+        return copy;
+      });
     } else {
       setSelectedMembers([...selectedMembers, phone]);
     }
   };
+
+  const updateCustomShare = (phone, val) => {
+    setCustomShares(prev => ({
+      ...prev,
+      [phone]: val
+    }));
+  };
+
+  const totalCustomSplitAmount = splitType === 'custom'
+    ? selectedMembers.reduce((sum, phone) => sum + (Number(customShares[phone]) || 0), 0)
+    : 0;
+
+  const selfShare = splitType === 'custom'
+    ? (Number(amount) || 0) - totalCustomSplitAmount
+    : (Number(amount) || 0) / (selectedMembers.length + 1);
 
   const total = filtered.reduce((s, e) => s + e.amount, 0);
 
@@ -302,7 +393,16 @@ export default function ExpensesScreen() {
 
                   {splitGroupId && (
                     <View style={styles.memberSelectBox}>
-                       <Text style={styles.memberSelectTitle}>Select members to include:</Text>
+                       <Text style={styles.memberSelectTitle}>Split Type:</Text>
+                       <View style={styles.typeRow}>
+                         {['equal', 'custom'].map((t) => (
+                           <TouchableOpacity key={t} style={[styles.typeBtn, splitType === t && styles.typeBtnActive]} onPress={() => setSplitType(t)}>
+                             <Text style={[styles.typeBtnText, splitType === t && { color: COLORS.accent }]}>{t === 'equal' ? '⚖️ Equal' : '✏️ Custom'}</Text>
+                           </TouchableOpacity>
+                         ))}
+                       </View>
+
+                       <Text style={[styles.memberSelectTitle, { marginTop: 12 }]}>Select members to include:</Text>
                        <View style={styles.memberGrid}>
                           {groups.find(g => g.id === splitGroupId)?.members.filter(m => m.phone !== 'self').map(m => (
                             <TouchableOpacity 
@@ -314,6 +414,37 @@ export default function ExpensesScreen() {
                             </TouchableOpacity>
                           ))}
                        </View>
+
+                       {splitType === 'custom' && selectedMembers.length > 0 && (
+                         <View style={{ marginTop: 16, gap: 10 }}>
+                           <Text style={styles.memberSelectTitle}>Enter Custom Shares (₹):</Text>
+                           {selectedMembers.map(phone => {
+                             const mObj = groups.find(g => g.id === splitGroupId)?.members.find(m => m.phone === phone);
+                             if (!mObj) return null;
+                             return (
+                               <View key={phone} style={styles.customShareRow}>
+                                 <Text style={styles.customShareName}>{mObj.name}</Text>
+                                 <TextInput
+                                   style={styles.customShareInput}
+                                   placeholder="0"
+                                   placeholderTextColor={COLORS.textMuted}
+                                   value={customShares[phone] || ''}
+                                   onChangeText={val => updateCustomShare(phone, val)}
+                                   keyboardType="numeric"
+                                 />
+                               </View>
+                             );
+                           })}
+                         </View>
+                       )}
+
+                       {amount ? (
+                         <Text style={[styles.perShareText, { marginTop: 12 }]}>
+                           {splitType === 'custom'
+                             ? (selfShare < 0 ? '⚠️ Invalid custom shares sum' : `Your share: ${formatCurrency(selfShare)}`)
+                             : `Your share: ${formatCurrency(selfShare)} each`}
+                         </Text>
+                       ) : null}
                     </View>
                   )}
                 </>
@@ -472,4 +603,12 @@ const styles = StyleSheet.create({
   memberChip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
   memberChipActive: { backgroundColor: COLORS.accent, borderColor: COLORS.accent },
   memberChipText: { color: COLORS.textSecondary, fontSize: 12, fontWeight: '600' },
+  typeRow: { flexDirection: 'row', gap: 8, marginVertical: 8 },
+  typeBtn: { flex: 1, backgroundColor: COLORS.card, borderRadius: 10, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: COLORS.border },
+  typeBtnActive: { borderColor: COLORS.accent, backgroundColor: COLORS.accent + '20' },
+  typeBtnText: { color: COLORS.textMuted, fontSize: 13, fontWeight: '600' },
+  customShareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: COLORS.card, padding: 8, borderRadius: 10, borderWidth: 1, borderColor: COLORS.border },
+  customShareName: { color: COLORS.textPrimary, fontSize: 14, fontWeight: '600' },
+  customShareInput: { backgroundColor: COLORS.elevated, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, color: COLORS.textPrimary, fontSize: 14, fontWeight: '700', minWidth: 70, textAlign: 'right', borderWidth: 1, borderColor: COLORS.border },
+  perShareText: { color: COLORS.textMuted, fontSize: 12, textAlign: 'center' },
 });

@@ -45,10 +45,7 @@ export const scheduleMonthlySummaryNotification = async (monthTotal = 0, topCate
         sound: true,
         data: { type: 'monthly_summary' },
       },
-      trigger: {
-        type: Notifications.SchedulableTriggerInputTypes.DATE,
-        date: nextMonth,
-      },
+      trigger: nextMonth, // Shorthand for date trigger
     });
 
     await AsyncStorage.setItem(NOTIF_SCHEDULED_KEY, nextMonth.toISOString());

@@ -167,7 +167,7 @@ export default function App() {
                 options={{ presentation: 'modal', gestureEnabled: true }}
               />
               <Stack.Screen
-                name="Lend"
+                name="LendMain"
                 component={LendScreen}
               />
             </Stack.Navigator>

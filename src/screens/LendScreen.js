@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, TouchableOpacity,
-  Alert, Modal, TextInput, FlatList,
+  Alert, Modal, TextInput, FlatList, BackHandler,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, FONT_SIZE, BORDER_RADIUS, formatCurrency, formatDate } from '../utils/theme';
@@ -20,6 +20,16 @@ export default function LendScreen({ navigation }) {
   const [activeTab, setActiveTab] = useState('lends'); // lends | transfers
 
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
+
+  // Hardware back: if viewing a contact detail, go back to list
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (selectedContact) { setSelectedContact(null); return true; }
+      if (showAddModal)    { setShowAddModal(false);    return true; }
+      return false;
+    });
+    return () => handler.remove();
+  }, [selectedContact, showAddModal]);
 
   const handleAddRecord = async () => {
     if (!addContact || !addAmount) {

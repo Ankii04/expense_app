@@ -1,7 +1,7 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, ScrollView, TouchableOpacity,
-  StyleSheet, Alert, Linking, Switch, Image, Modal,
+  StyleSheet, Alert, Linking, Switch, Image, Modal, BackHandler,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -12,23 +12,12 @@ import { useExpenses, useGroups } from '../hooks/useExpenses';
 import CategoryPicker from '../components/CategoryPicker';
 import ContactPicker from '../components/ContactPicker';
 
-const UPI_APPS_LIST = [
-  { id: 'gpay',      name: 'Google Pay', emoji: '🟢', scheme: 'tez://upi/pay'       },
-  { id: 'phonepe',   name: 'PhonePe',    emoji: '🟣', scheme: 'phonepe://pay'        },
-  { id: 'paytm',     name: 'Paytm',      emoji: '🔵', scheme: 'paytmmp://pay'        },
-  { id: 'bhim',      name: 'BHIM',       emoji: '🟠', scheme: 'upi://pay'            },
-  { id: 'cred',      name: 'CRED',       emoji: '⚫', scheme: 'credpay://upi/pay'    },
-  { id: 'amazonpay', name: 'Amazon',     emoji: '🟡', scheme: 'amazonpay://pay'      },
-];
-
 export default function PayScreen({ route, navigation }) {
   const params        = route.params || {};
   const rawQS         = params.rawQueryString || '';
   const isMerchantQR  = rawQS.length > 0;
 
   // ── Does this merchant QR carry a digital signature? ──────────
-  // If yes → ANY modification (even changing am=) breaks the signature
-  // and the bank returns "restricted to receiver"
   const hasSign = isMerchantQR && /(?:^|&)sign=/i.test(rawQS);
 
   const { addExpense } = useExpenses();
@@ -45,26 +34,31 @@ export default function PayScreen({ route, navigation }) {
   const [splitGroupId,  setSplitGroupId]  = useState(null);
   const [selectedMembers, setSelectedMembers] = useState([]);
   const [recordAsLend, setRecordAsLend] = useState(false);
+  const [splitType, setSplitType] = useState('equal'); // 'equal' or 'custom'
+  const [customShares, setCustomShares] = useState({}); // phone -> amount string
 
-  const canPay = upiId.trim().length > 0 && (Number(amount) > 0 || isMerchantQR);
+  // For local logs, payee/merchant name is completely optional! Only amount is required.
+  const canSave = Number(amount) > 0;
+  const canPay = (upiId || '').trim().length > 0 && (Number(amount) > 0 || isMerchantQR);
+
+  // Hardware back button — close this modal screen
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      navigation.goBack();
+      return true;
+    });
+    return () => handler.remove();
+  }, [navigation]);
 
   /**
    * UPI URL Builder — NPCI-compliant
-   *
-   * Rule: If raw QR has sign= → NEVER touch any parameter.
-   *       Open the URL byte-for-byte as scanned.
-   *
-   * Rule: If raw QR has no sign= → safe to substitute am= only.
-   *
-   * Rule: Manual entry → build fresh with only needed params.
    */
   const buildUPIUrl = (appScheme) => {
     const scheme = appScheme || 'upi://pay';
 
     if (isMerchantQR && rawQS) {
       if (hasSign) {
-        // Signed QR: pass EXACTLY as scanned — do NOT modify ANYTHING
-        return `upi://pay?${rawQS}`;
+        return `${scheme}?${rawQS}`;
       }
 
       // Unsigned merchant QR: safe to substitute amount
@@ -89,34 +83,129 @@ export default function PayScreen({ route, navigation }) {
     return `${scheme}?${parts.join('&')}`;
   };
 
-  const openApp = async (app) => {
+  const recalculateBalances = (members, expenses) => {
+    const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
+    expenses.forEach(exp => {
+      const amount = Number(exp.amount);
+      
+      if (exp.shares) {
+        // Custom split: use explicit shares map
+        newMembers.forEach(m => {
+          const share = exp.shares[m.phone] || 0;
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - share);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= share;
+          }
+        });
+      } else if (exp.splitMembers && exp.splitMembers.length > 0) {
+        // Partial split: divide equally among splitMembers (payer optional)
+        const payerInSplit = exp.splitMembers.includes(exp.payerPhone);
+        const divisor = exp.splitMembers.length + (payerInSplit ? 0 : 1);
+        const perPerson = amount / divisor;
+        
+        newMembers.forEach(m => {
+          const isInSplit = exp.splitMembers.includes(m.phone);
+          const isPayer = m.phone === exp.payerPhone;
+          
+          if (isPayer) {
+            const payerShare = payerInSplit ? perPerson : 0;
+            m.balance += (amount - payerShare);
+            m.totalSpent += amount;
+          } else if (isInSplit) {
+            m.balance -= perPerson;
+          }
+        });
+      } else {
+        // Equal split among all members
+        const perPerson = amount / members.length;
+        newMembers.forEach(m => {
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - perPerson);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= perPerson;
+          }
+        });
+      }
+    });
+    return newMembers;
+  };
+
+  const openApp = async () => {
     if (!canPay) {
       Alert.alert('Missing Info', 'Enter UPI ID and amount first');
       return;
     }
-    const url = buildUPIUrl(app?.scheme);
+    const url = buildUPIUrl('upi://pay');
 
     try {
       await Linking.openURL(url);
       setTimeout(() => {
         Alert.alert(
           'Payment Done?',
-          `Did the payment go through${app ? ` via ${app.name}` : ''}?`,
+          `Did the payment go through?`,
           [
             { text: 'No', style: 'cancel' },
             {
               text: 'Yes — Log it',
               onPress: async () => {
+                const getFallbackPayee = () => {
+                  const cat = CATEGORIES.find(c => c.id === category);
+                  return cat ? `${cat.emoji} ${cat.name} Expense` : 'Logged Expense';
+                };
+                const finalPayee = payeeName.trim() || upiId.trim() || getFallbackPayee();
+                const expAmount = Number(amount);
+                const expNote = note || `To ${finalPayee}`;
+
                 await addExpense({
-                  amount: Number(amount),
+                  amount: expAmount,
                   category,
                   upiId,
-                  payeeName,
-                  note: note || `To ${payeeName || upiId}`,
-                  contactName:  contact?.name  || payeeName || '',
+                  payeeName: finalPayee,
+                  note: expNote,
+                  contactName:  contact?.name  || finalPayee || '',
                   contactPhone: contact?.phone || '',
-                  upiApp: app?.name || '',
+                  upiApp: 'UPI App',
                 });
+
+                // Handle group split functional logic
+                if (splitGroupId && selectedMembers.length > 0) {
+                  const group = groups.find(g => g.id === splitGroupId);
+                  if (group) {
+                    let updatedExpenses;
+                    if (splitType === 'custom') {
+                      const sharesObj = {};
+                      selectedMembers.forEach(phone => {
+                        sharesObj[phone] = Number(customShares[phone]) || 0;
+                      });
+                      sharesObj['self'] = selfShare;
+
+                      updatedExpenses = [...group.expenses, {
+                        id: Date.now().toString(),
+                        title: expNote,
+                        amount: expAmount,
+                        payerPhone: 'self',
+                        shares: sharesObj,
+                        date: new Date().toISOString()
+                      }];
+                    } else {
+                      updatedExpenses = [...group.expenses, {
+                        id: Date.now().toString(),
+                        title: expNote,
+                        amount: expAmount,
+                        payerPhone: 'self',
+                        splitMembers: [...selectedMembers, 'self'],
+                        date: new Date().toISOString()
+                      }];
+                    }
+
+                    const updatedMembers = recalculateBalances(group.members, updatedExpenses);
+                    await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
+                  }
+                }
+
                 Alert.alert('✓ Recorded', `${formatCurrency(amount)} logged`);
                 navigation.navigate('Home');
               },
@@ -125,7 +214,75 @@ export default function PayScreen({ route, navigation }) {
         );
       }, 1500);
     } catch {
-      Alert.alert('Could not open UPI app', 'Try another payment app or check if it\'s installed.');
+      Alert.alert('Could not open UPI app', 'Make sure a UPI payment app is installed on your phone.');
+    }
+  };
+
+  const handleLogLocallyOnly = async () => {
+    if (!canSave) {
+      Alert.alert('Missing Info', 'Enter amount to log expense');
+      return;
+    }
+    try {
+      const getFallbackPayee = () => {
+        const cat = CATEGORIES.find(c => c.id === category);
+        return cat ? `${cat.emoji} ${cat.name} Expense` : 'Manual Log';
+      };
+      const finalPayee = payeeName.trim() || upiId.trim() || getFallbackPayee();
+      const expAmount = Number(amount);
+      const expNote = note || `Logged: ${finalPayee}`;
+
+      await addExpense({
+        amount: expAmount,
+        category,
+        upiId,
+        payeeName: finalPayee,
+        note: expNote,
+        contactName:  contact?.name  || finalPayee || '',
+        contactPhone: contact?.phone || '',
+        upiApp: 'Local Log',
+      });
+
+      // Handle group split functional logic
+      if (splitGroupId && selectedMembers.length > 0) {
+        const group = groups.find(g => g.id === splitGroupId);
+        if (group) {
+          let updatedExpenses;
+          if (splitType === 'custom') {
+            const sharesObj = {};
+            selectedMembers.forEach(phone => {
+              sharesObj[phone] = Number(customShares[phone]) || 0;
+            });
+            sharesObj['self'] = selfShare;
+
+            updatedExpenses = [...group.expenses, {
+              id: Date.now().toString(),
+              title: expNote,
+              amount: expAmount,
+              payerPhone: 'self',
+              shares: sharesObj,
+              date: new Date().toISOString()
+            }];
+          } else {
+            updatedExpenses = [...group.expenses, {
+              id: Date.now().toString(),
+              title: expNote,
+              amount: expAmount,
+              payerPhone: 'self',
+              splitMembers: [...selectedMembers, 'self'],
+              date: new Date().toISOString()
+            }];
+          }
+
+          const updatedMembers = recalculateBalances(group.members, updatedExpenses);
+          await updateGroup(group.id, { expenses: updatedExpenses, members: updatedMembers });
+        }
+      }
+
+      Alert.alert('✓ Recorded Locally', `${formatCurrency(amount)} logged successfully.`);
+      navigation.navigate('Home');
+    } catch (err) {
+      Alert.alert('Error', 'Could not record expense.');
     }
   };
 
@@ -133,15 +290,36 @@ export default function PayScreen({ route, navigation }) {
     if (splitGroupId === id) {
       setSplitGroupId(null);
       setSelectedMembers([]);
+      setSplitType('equal');
+      setCustomShares({});
     } else {
       setSplitGroupId(id);
+      setSplitType('equal');
+      setCustomShares({});
       const g = groups.find(g => g.id === id);
       if (g) setSelectedMembers(g.members.filter(m => m.phone !== 'self').map(m => m.phone));
     }
   };
 
+  const updateCustomShare = (phone, val) => {
+    setCustomShares(prev => ({
+      ...prev,
+      [phone]: val
+    }));
+  };
+
+  const totalCustomSplitAmount = splitType === 'custom'
+    ? selectedMembers.reduce((sum, phone) => sum + (Number(customShares[phone]) || 0), 0)
+    : 0;
+
+  const selfShare = splitType === 'custom'
+    ? Number(amount) - totalCustomSplitAmount
+    : Number(amount) / (selectedMembers.length + 1);
+
   const perShare = splitGroupId && amount
-    ? formatCurrency(Number(amount) / (selectedMembers.length + 1))
+    ? (splitType === 'custom'
+        ? (selfShare < 0 ? '⚠️ Invalid custom shares sum' : `Your share: ${formatCurrency(selfShare)}`)
+        : `Your share: ${formatCurrency(selfShare)} each`)
     : null;
 
   return (
@@ -151,7 +329,7 @@ export default function PayScreen({ route, navigation }) {
         <TouchableOpacity style={s.cancelBtn} onPress={() => navigation.goBack()} hitSlop={{ top:12,bottom:12,left:12,right:12 }}>
           <Text style={s.cancelText}>Cancel</Text>
         </TouchableOpacity>
-        <Text style={s.headerTitle}>Pay Now</Text>
+        <Text style={s.headerTitle}>{params.isLogOnlyDefault ? 'Record Expense' : 'Pay & Log'}</Text>
         <View style={{ width: 70 }} />
       </View>
 
@@ -165,7 +343,7 @@ export default function PayScreen({ route, navigation }) {
           ? <Text style={s.upiSmall}>{upiId}</Text>
           : (
             <View style={s.inputGroup}>
-              <Text style={s.label}>UPI ID</Text>
+              <Text style={s.label}>UPI ID (Optional for Log Only)</Text>
               <TextInput
                 style={s.input}
                 placeholder="name@bank"
@@ -228,7 +406,7 @@ export default function PayScreen({ route, navigation }) {
           {!isMerchantQR && (
             <TextInput
               style={[s.input, { marginTop: 8 }]}
-              placeholder="Payee Name"
+              placeholder="Payee/Merchant Name"
               placeholderTextColor={COLORS.textMuted}
               value={payeeName}
               onChangeText={setPayeeName}
@@ -267,7 +445,16 @@ export default function PayScreen({ route, navigation }) {
               </ScrollView>
               {splitGroupId && (
                 <View style={{ marginTop: 12 }}>
-                  <Text style={s.memberSelectTitle}>Members in split:</Text>
+                  <Text style={s.memberSelectTitle}>Split Type:</Text>
+                  <View style={s.typeRow}>
+                    {['equal', 'custom'].map((t) => (
+                      <TouchableOpacity key={t} style={[s.typeBtn, splitType === t && s.typeBtnActive]} onPress={() => setSplitType(t)}>
+                        <Text style={[s.typeBtnText, splitType === t && { color: COLORS.accent }]}>{t === 'equal' ? '⚖️ Equal' : '✏️ Custom'}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  
+                  <Text style={[s.memberSelectTitle, { marginTop: 12 }]}>Members in split:</Text>
                   <View style={s.memberGrid}>
                     {groups.find(g => g.id === splitGroupId)?.members
                       .filter(m => m.phone !== 'self')
@@ -286,6 +473,29 @@ export default function PayScreen({ route, navigation }) {
                         </TouchableOpacity>
                       ))}
                   </View>
+
+                  {splitType === 'custom' && selectedMembers.length > 0 && (
+                    <View style={{ marginTop: 16, gap: 10 }}>
+                      <Text style={s.memberSelectTitle}>Enter Custom Shares (₹):</Text>
+                      {selectedMembers.map(phone => {
+                        const mObj = groups.find(g => g.id === splitGroupId)?.members.find(m => m.phone === phone);
+                        if (!mObj) return null;
+                        return (
+                          <View key={phone} style={s.customShareRow}>
+                            <Text style={s.customShareName}>{mObj.name}</Text>
+                            <TextInput
+                              style={s.customShareInput}
+                              placeholder="0"
+                              placeholderTextColor={COLORS.textMuted}
+                              value={customShares[phone] || ''}
+                              onChangeText={val => updateCustomShare(phone, val)}
+                              keyboardType="numeric"
+                            />
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
                 </View>
               )}
             </View>
@@ -322,17 +532,32 @@ export default function PayScreen({ route, navigation }) {
           <Text style={s.contactArrow}>›</Text>
         </TouchableOpacity>
 
-        {/* Pay button */}
-        <TouchableOpacity
-          style={[s.payBtn, !canPay && s.payBtnDisabled]}
-          onPress={() => openApp(null)}
-          disabled={!canPay}
-          activeOpacity={0.8}
-        >
-          <Text style={s.payBtnText}>
-            {amount ? `Pay ${formatCurrency(amount)}` : 'Pay Now'}
-          </Text>
-        </TouchableOpacity>
+        {/* Actions Section */}
+        <View style={{ gap: 12, marginTop: 12 }}>
+          {params.isLogOnlyDefault ? (
+            /* Log locally only */
+            <TouchableOpacity
+              style={[s.payBtn, !canSave && s.payBtnDisabled]}
+              onPress={handleLogLocallyOnly}
+              disabled={!canSave}
+              activeOpacity={0.8}
+            >
+              <Text style={s.payBtnText}>✍️ Save Log</Text>
+            </TouchableOpacity>
+          ) : (
+            /* Pay & Log via generic phone chooser */
+            <TouchableOpacity
+              style={[s.payBtn, !canPay && s.payBtnDisabled]}
+              onPress={openApp}
+              disabled={!canPay}
+              activeOpacity={0.8}
+            >
+              <Text style={s.payBtnText}>
+                {amount ? `💸 Pay & Log ${formatCurrency(amount)}` : '💸 Pay & Log via UPI App'}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -408,5 +633,16 @@ const s = StyleSheet.create({
 
   payBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#E05D2A', borderRadius: 18, paddingVertical: 18, gap: 8, elevation: 10, shadowColor: '#E05D2A', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.4, shadowRadius: 16 },
   payBtnDisabled: { opacity: 0.35 },
-  payBtnText: { color: '#fff', fontSize: 20, fontWeight: '800' },
+  payBtnText: { color: '#fff', fontSize: 18, fontWeight: '800' },
+
+  logLocallyBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C28', borderRadius: 18, paddingVertical: 17, gap: 8, borderWidth: 1.5, borderColor: COLORS.accent },
+  logLocallyBtnDisabled: { opacity: 0.35 },
+  logLocallyBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  typeRow: { flexDirection: 'row', gap: 8, marginVertical: 8 },
+  typeBtn: { flex: 1, backgroundColor: '#27272A', borderRadius: 10, paddingVertical: 8, alignItems: 'center', borderWidth: 1, borderColor: '#3F3F46' },
+  typeBtnActive: { borderColor: COLORS.accent, backgroundColor: COLORS.accent + '20' },
+  typeBtnText: { color: COLORS.textMuted, fontSize: 13, fontWeight: '600' },
+  customShareRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#27272A', padding: 8, borderRadius: 10, borderWidth: 1, borderColor: '#3F3F46' },
+  customShareName: { color: '#fff', fontSize: 14, fontWeight: '600' },
+  customShareInput: { backgroundColor: '#18181B', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, color: '#fff', fontSize: 14, fontWeight: '700', minWidth: 70, textAlign: 'right', borderWidth: 1, borderColor: '#3F3F46' },
 });

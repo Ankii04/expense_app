@@ -11,7 +11,8 @@ const SCREEN_W  = Dimensions.get('window').width;
 const PIE_SIZE  = Math.min(200, SCREEN_W - 80);
 const RADIUS    = PIE_SIZE / 2;
 const CHART_H   = 150;
-const CHART_W   = SCREEN_W - 40 - 48; // screen - outer padding - y-axis width
+// card padding=16 each side (32 total) + yAxis width 36 = 68
+const CHART_W   = SCREEN_W - 40 - 68; // screen - outer padding - (card padding + y-axis)
 
 export default function AnalyticsScreen({ navigation }) {
   const { expenses, monthTotal, categorySpend, refresh } = useExpenses();
@@ -80,7 +81,7 @@ export default function AnalyticsScreen({ navigation }) {
           </View>
 
           {/* Bars */}
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, overflow: 'hidden' }}>
             <Svg width={CHART_W} height={CHART_H}>
               {monthlyData.map((d, i) => {
                 const barH = maxMonthly > 0 ? (d.total / maxMonthly) * CHART_H : 0;
@@ -119,6 +120,7 @@ export default function AnalyticsScreen({ navigation }) {
           <View style={styles.pieContainer}>
             <Svg width={PIE_SIZE} height={PIE_SIZE}>
               <G>
+                {(() => { cumulativeAngle = 0; return null; })()}
                 {chartData.map(slice => {
                   const pct = slice.amount / monthTotal;
                   const angle = pct * 360;

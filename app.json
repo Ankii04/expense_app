@@ -1,8 +1,8 @@
 {
   "expo": {
     "name": "Spendify",
-    "slug": "antigravity",
-    "scheme": "antigravity",
+    "slug": "spendify",
+    "scheme": "spendify",
     "version": "2.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -28,8 +28,8 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0A0A0F"
       },
-      "package": "com.spendify.upi",
-      "versionCode": 2,
+      "package": "com.spendify.app",
+      "versionCode": 4,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_CONTACTS",
@@ -63,11 +63,11 @@
         }
       ]
     ],
+    "owner": "ankiii04",
     "extra": {
       "eas": {
-        "projectId": "ddddfe21-8372-4156-ad50-2ae233730db1"
+        "projectId": "14debd99-9006-4fb1-a4a0-4488f89e5c6c"
       }
-    },
-    "owner": "ankii04"
+    }
   }
 }

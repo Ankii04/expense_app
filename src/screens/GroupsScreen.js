@@ -24,11 +24,21 @@ export default function GroupsScreen() {
   const [payerPhone, setPayerPhone] = useState('self');
   const [editingExpense, setEditingExpense] = useState(null);
 
+  // Group Edit state
+  const [editingGroup, setEditingGroup] = useState(null);
+  const [editGroupName, setEditGroupName] = useState('');
+  const [editMembers, setEditMembers] = useState([]);
+  const [showEditContacts, setShowEditContacts] = useState(false);
+
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
 
   // Handle hardware back button
   useEffect(() => {
     const backAction = () => {
+      if (editingGroup) {
+        setEditingGroup(null);
+        return true;
+      }
       if (selectedGroup) {
         setSelectedGroup(null);
         return true;
@@ -42,7 +52,7 @@ export default function GroupsScreen() {
 
     const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
     return () => backHandler.remove();
-  }, [selectedGroup, creating]);
+  }, [editingGroup, selectedGroup, creating]);
 
   const handleAddMember = (contact) => {
     if (members.find(m => m.phone === contact.phone)) return;
@@ -112,17 +122,82 @@ export default function GroupsScreen() {
     const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
     expenses.forEach(exp => {
       const amount = Number(exp.amount);
-      const perPerson = amount / members.length;
-      newMembers.forEach(m => {
-        if (m.phone === exp.payerPhone) {
-          m.balance += (amount - perPerson);
-          m.totalSpent += amount;
-        } else {
-          m.balance -= perPerson;
-        }
-      });
+      
+      if (exp.shares) {
+        // Custom split: use explicit shares map
+        newMembers.forEach(m => {
+          const share = exp.shares[m.phone] || 0;
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - share);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= share;
+          }
+        });
+      } else if (exp.splitMembers && exp.splitMembers.length > 0) {
+        // Partial split: divide equally among splitMembers (which includes payer optionally)
+        const payerInSplit = exp.splitMembers.includes(exp.payerPhone);
+        const divisor = exp.splitMembers.length + (payerInSplit ? 0 : 1);
+        const perPerson = amount / divisor;
+        
+        newMembers.forEach(m => {
+          const isInSplit = exp.splitMembers.includes(m.phone);
+          const isPayer = m.phone === exp.payerPhone;
+          
+          if (isPayer) {
+            const payerShare = payerInSplit ? perPerson : 0;
+            m.balance += (amount - payerShare);
+            m.totalSpent += amount;
+          } else if (isInSplit) {
+            m.balance -= perPerson;
+          }
+        });
+      } else {
+        // Traditional fallback: split equally among all members
+        const perPerson = amount / members.length;
+        newMembers.forEach(m => {
+          if (m.phone === exp.payerPhone) {
+            m.balance += (amount - perPerson);
+            m.totalSpent += amount;
+          } else {
+            m.balance -= perPerson;
+          }
+        });
+      }
     });
     return newMembers;
+  };
+
+  const handleStartEditGroup = (group) => {
+    setEditingGroup(group);
+    setEditGroupName(group.name);
+    setEditMembers(group.members.filter(m => m.phone !== 'self'));
+  };
+
+  const handleAddMemberToEdit = (contact) => {
+    if (editMembers.find(m => m.phone === contact.phone)) return;
+    setEditMembers([...editMembers, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0 }]);
+  };
+
+  const handleRemoveMemberFromEdit = (phone) => {
+    setEditMembers(editMembers.filter(m => m.phone !== phone));
+  };
+
+  const handleSaveEditGroup = async () => {
+    if (!editGroupName.trim()) {
+      Alert.alert('Error', 'Please enter a group name');
+      return;
+    }
+    const organizer = editingGroup.members.find(m => m.phone === 'self') || { name: 'You', phone: 'self', balance: 0, totalSpent: 0 };
+    const finalMembers = [...editMembers, organizer];
+    const updatedMembers = recalculateBalances(finalMembers, editingGroup.expenses);
+
+    await updateGroup(editingGroup.id, { name: editGroupName.trim(), members: updatedMembers });
+    const updatedGroupObj = { ...editingGroup, name: editGroupName.trim(), members: updatedMembers };
+    setSelectedGroup(updatedGroupObj);
+    setEditingGroup(null);
+    setEditGroupName('');
+    setEditMembers([]);
   };
 
   const resetExpenseForm = () => {
@@ -334,7 +409,12 @@ td{padding:12px;border-bottom:1px solid #F3F4F6;font-size:13px;}
               <>
                 <View style={styles.modalHeader}>
                    <TouchableOpacity onPress={() => setSelectedGroup(null)} style={styles.modalCloseBtn}><Text style={styles.closeBtn}>✕</Text></TouchableOpacity>
-                   <Text style={styles.modalTitle}>{selectedGroup.name}</Text>
+                   <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 6, marginHorizontal: 12 }}>
+                      <Text style={styles.modalTitle} numberOfLines={1}>{selectedGroup.name}</Text>
+                      <TouchableOpacity onPress={() => handleStartEditGroup(selectedGroup)} style={styles.editIconBtn}>
+                         <Text style={{ fontSize: 18 }}>✏️</Text>
+                      </TouchableOpacity>
+                   </View>
                    <TouchableOpacity onPress={() => setAddExpenseModal(true)} style={styles.modalAddBtn}><Text style={styles.addExpBtnText}>+ Expense</Text></TouchableOpacity>
                 </View>
 
@@ -456,6 +536,52 @@ td{padding:12px;border-bottom:1px solid #F3F4F6;font-size:13px;}
                       </View>
                    </View>
                 </Modal>
+
+                {/* Edit Group Modal */}
+                 <Modal visible={!!editingGroup} transparent animationType="slide" onRequestClose={() => setEditingGroup(null)}>
+                    <View style={styles.overlay}>
+                       <View style={styles.editGroupCard}>
+                          <Text style={styles.formTitle}>Edit Group</Text>
+                          
+                          <Text style={styles.label}>Group Name</Text>
+                          <TextInput 
+                            style={styles.input} 
+                            placeholder="Group Name" 
+                            placeholderTextColor={COLORS.textMuted} 
+                            value={editGroupName} 
+                            onChangeText={setEditGroupName} 
+                          />
+                          
+                          <Text style={styles.label}>Members</Text>
+                          <ScrollView style={{ maxHeight: 200, marginBottom: 12 }}>
+                            {editMembers.map((m, i) => (
+                              <View key={i} style={styles.editMemberRow}>
+                                 <View style={styles.memberAvatar}><Text style={styles.memberAvatarText}>{m.name[0]}</Text></View>
+                                 <Text style={styles.memberName}>{m.name}</Text>
+                                 <TouchableOpacity onPress={() => handleRemoveMemberFromEdit(m.phone)}>
+                                   <Text style={{ color: COLORS.red, fontWeight: '700' }}>Remove</Text>
+                                 </TouchableOpacity>
+                              </View>
+                            ))}
+                          </ScrollView>
+
+                          <TouchableOpacity style={styles.addBtn} onPress={() => setShowEditContacts(true)}>
+                            <Text style={styles.addBtnText}>+ Add Member</Text>
+                          </TouchableOpacity>
+
+                          <View style={[styles.row, { marginTop: 24 }]}>
+                             <TouchableOpacity style={styles.cancelBtn} onPress={() => { setEditingGroup(null); setEditMembers([]); }}>
+                                <Text style={styles.cancelBtnText}>Cancel</Text>
+                             </TouchableOpacity>
+                             <TouchableOpacity style={styles.saveBtn} onPress={handleSaveEditGroup}>
+                                <Text style={styles.saveBtnText}>Save</Text>
+                             </TouchableOpacity>
+                          </View>
+                       </View>
+                    </View>
+                 </Modal>
+
+                 <ContactPicker visible={showEditContacts} onClose={() => setShowEditContacts(false)} onSelect={handleAddMemberToEdit} />
               </>
             )}
          </View>
@@ -538,4 +664,7 @@ const styles = StyleSheet.create({
   emptyHistory: { alignItems: 'center', paddingVertical: 50, borderStyle: 'dashed', borderWidth: 1, borderColor: '#27272A', borderRadius: 24 },
   emptyHistoryText: { color: '#71717A', fontWeight: '600', fontSize: 16 },
   row: { flexDirection: 'row', justifyContent: 'center', gap: 16, width: '100%' },
+  editIconBtn: { padding: 4, marginLeft: 6 },
+  editGroupCard: { backgroundColor: '#18181B', padding: 24, borderRadius: 28, borderWidth: 1, borderColor: '#6366F140', width: '100%', maxHeight: '85%' },
+  editMemberRow: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#27272A', padding: 12, borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: '#3F3F46' },
 });

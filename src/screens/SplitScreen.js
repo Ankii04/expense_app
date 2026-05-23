@@ -1,5 +1,5 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, Alert, Modal } from 'react-native';
+import React, { useState, useCallback, useEffect } from 'react';
+import { View, Text, ScrollView, TextInput, TouchableOpacity, StyleSheet, Alert, Modal, BackHandler } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { COLORS, SPACING, FONT_SIZE, BORDER_RADIUS, formatCurrency } from '../utils/theme';
 import { useSplits } from '../hooks/useExpenses';
@@ -20,6 +20,16 @@ export default function SplitScreen() {
   const [newPaidAmount, setNewPaidAmount] = useState('');
 
   useFocusEffect(useCallback(() => { refresh(); }, [refresh]));
+
+  // Hardware back: exit create mode before leaving
+  useEffect(() => {
+    const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (creating) { setCreating(false); setMembers([]); return true; }
+      if (editingPayment) { setEditingPayment(null); return true; }
+      return false;
+    });
+    return () => handler.remove();
+  }, [creating, editingPayment]);
 
   const addMember = (contact) => {
     if (members.find((m) => m.phone === contact.phone)) return;

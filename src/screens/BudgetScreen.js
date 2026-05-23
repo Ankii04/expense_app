@@ -120,7 +120,7 @@ export default function BudgetScreen() {
       {editCat ? (
         <View style={styles.editCard}>
           <Text style={styles.editLabel}>
-            {editCat === 'total' ? '💰 Total Monthly Budget' : `${getCategoryById(editCat).emoji} ${getCategoryById(editCat).name}`}
+            {editCat === 'total' ? '💰   Total Monthly Budget' : `${getCategoryById(editCat).emoji}   ${getCategoryById(editCat).name}`}
           </Text>
           <TextInput style={styles.editInput} placeholder="Monthly limit (₹)" placeholderTextColor={COLORS.textMuted} value={editAmt} onChangeText={setEditAmt} keyboardType="numeric" autoFocus />
           <View style={styles.editBtns}>
@@ -136,7 +136,7 @@ export default function BudgetScreen() {
         <View style={styles.catGrid}>
           {catsWithout.map((cat) => (
             <TouchableOpacity key={cat.id} style={styles.catChip} onPress={() => setEditCat(cat.id)}>
-              <Text style={{ fontSize: 18 }}>{cat.emoji}</Text>
+              <Text style={{ fontSize: 18, marginRight: 8 }}>{cat.emoji}</Text>
               <Text style={styles.catChipText}>{cat.name}</Text>
             </TouchableOpacity>
           ))}
