@@ -56,7 +56,7 @@ export default function GroupsScreen() {
 
   const handleAddMember = (contact) => {
     if (members.find(m => m.phone === contact.phone)) return;
-    setMembers([...members, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0 }]);
+    setMembers([...members, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0, joined_at: new Date().toISOString(), left_at: null }]);
   };
 
   const handleCreateGroup = async () => {
@@ -64,7 +64,7 @@ export default function GroupsScreen() {
       Alert.alert('Error', 'Please enter a group name');
       return;
     }
-    const finalMembers = [...members, { name: 'You', phone: 'self', balance: 0, totalSpent: 0 }];
+    const finalMembers = [...members, { name: 'You', phone: 'self', balance: 0, totalSpent: 0, joined_at: new Date().toISOString(), left_at: null }];
     await addGroup({ name: groupName, members: finalMembers });
     setCreating(false);
     setGroupName('');
@@ -122,11 +122,48 @@ export default function GroupsScreen() {
     const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
     expenses.forEach(exp => {
       const amount = Number(exp.amount);
-      
+      const expDate = new Date(exp.date);
+
+      // Helper to check if a member is active at this expense's date
+      const isMemberActive = (m) => {
+        if (!m.joined_at) return true;
+        const join = new Date(m.joined_at);
+        const leave = m.left_at ? new Date(m.left_at) : null;
+        return expDate >= join && (!leave || expDate <= leave);
+      };
+
+      // Handle Settlements
+      if (exp.is_settlement) {
+        newMembers.forEach(m => {
+          if (m.phone === exp.payerPhone) {
+            m.balance += amount;
+          }
+          
+          // Organizer is 'self'
+          if (exp.payerPhone !== 'self' && m.phone === 'self') {
+            m.balance -= amount;
+          }
+          
+          // If organizer is payer, recipientPhone is the one receiving money
+          const recipientPhone = exp.splitMembers && exp.splitMembers.length > 0 ? exp.splitMembers[0] : null;
+          if (exp.payerPhone === 'self' && recipientPhone && m.phone === recipientPhone) {
+            m.balance -= amount;
+          }
+        });
+        return;
+      }
+
+      // Find active members for this expense
+      const activeMembers = newMembers.filter(isMemberActive);
+      if (activeMembers.length === 0) return; // safety check
+
+      const isPayerActive = activeMembers.some(m => m.phone === exp.payerPhone);
+
       if (exp.shares) {
         // Custom split: use explicit shares map
         newMembers.forEach(m => {
-          const share = exp.shares[m.phone] || 0;
+          const isActive = isMemberActive(m);
+          const share = isActive ? (exp.shares[m.phone] || 0) : 0;
           if (m.phone === exp.payerPhone) {
             m.balance += (amount - share);
             m.totalSpent += amount;
@@ -135,32 +172,44 @@ export default function GroupsScreen() {
           }
         });
       } else if (exp.splitMembers && exp.splitMembers.length > 0) {
-        // Partial split: divide equally among splitMembers (which includes payer optionally)
-        const payerInSplit = exp.splitMembers.includes(exp.payerPhone);
-        const divisor = exp.splitMembers.length + (payerInSplit ? 0 : 1);
-        const perPerson = amount / divisor;
-        
+        // Partial split: divide equally among active splitMembers
+        const activeSplitPhones = exp.splitMembers.filter(phone => {
+          const m = newMembers.find(member => member.phone === phone);
+          return m && isMemberActive(m);
+        });
+        const payerInSplit = activeSplitPhones.includes(exp.payerPhone);
+        const divisor = activeSplitPhones.length + (payerInSplit ? 0 : (isPayerActive ? 1 : 0));
+        const perPerson = divisor > 0 ? (amount / divisor) : 0;
+
         newMembers.forEach(m => {
-          const isInSplit = exp.splitMembers.includes(m.phone);
+          const isInSplit = activeSplitPhones.includes(m.phone);
           const isPayer = m.phone === exp.payerPhone;
-          
-          if (isPayer) {
-            const payerShare = payerInSplit ? perPerson : 0;
-            m.balance += (amount - payerShare);
-            m.totalSpent += amount;
-          } else if (isInSplit) {
-            m.balance -= perPerson;
+          const isActive = isMemberActive(m);
+
+          if (isActive) {
+            if (isPayer) {
+              const payerShare = payerInSplit ? perPerson : 0;
+              m.balance += (amount - payerShare);
+              m.totalSpent += amount;
+            } else if (isInSplit) {
+              m.balance -= perPerson;
+            }
           }
         });
       } else {
-        // Traditional fallback: split equally among all members
-        const perPerson = amount / members.length;
+        // Traditional fallback: split equally among active members
+        const divisor = activeMembers.length;
+        const perPerson = divisor > 0 ? (amount / divisor) : 0;
+        
         newMembers.forEach(m => {
-          if (m.phone === exp.payerPhone) {
-            m.balance += (amount - perPerson);
-            m.totalSpent += amount;
-          } else {
-            m.balance -= perPerson;
+          const isActive = isMemberActive(m);
+          if (isActive) {
+            if (m.phone === exp.payerPhone) {
+              m.balance += (amount - perPerson);
+              m.totalSpent += amount;
+            } else {
+              m.balance -= perPerson;
+            }
           }
         });
       }
@@ -176,7 +225,7 @@ export default function GroupsScreen() {
 
   const handleAddMemberToEdit = (contact) => {
     if (editMembers.find(m => m.phone === contact.phone)) return;
-    setEditMembers([...editMembers, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0 }]);
+    setEditMembers([...editMembers, { name: contact.name, phone: contact.phone, balance: 0, totalSpent: 0, joined_at: new Date().toISOString(), left_at: null }]);
   };
 
   const handleRemoveMemberFromEdit = (phone) => {
@@ -188,7 +237,7 @@ export default function GroupsScreen() {
       Alert.alert('Error', 'Please enter a group name');
       return;
     }
-    const organizer = editingGroup.members.find(m => m.phone === 'self') || { name: 'You', phone: 'self', balance: 0, totalSpent: 0 };
+    const organizer = editingGroup.members.find(m => m.phone === 'self') || { name: 'You', phone: 'self', balance: 0, totalSpent: 0, joined_at: editingGroup.date || new Date().toISOString(), left_at: null };
     const finalMembers = [...editMembers, organizer];
     const updatedMembers = recalculateBalances(finalMembers, editingGroup.expenses);
 
@@ -220,14 +269,24 @@ export default function GroupsScreen() {
     if (!settleAmount || !selectedGroup) return;
     const amount = Number(settleAmount);
     const idx = settleModal.memberIdx;
-    const updatedMembers = [...selectedGroup.members];
-    updatedMembers[idx].balance += amount; 
     
-    // We also record a "settlement" expense to keep history clean?
-    // For now just update balance as per original code.
+    const targetMember = selectedGroup.members[idx];
     
-    await updateGroup(selectedGroup.id, { members: updatedMembers });
-    setSelectedGroup({ ...selectedGroup, members: updatedMembers });
+    const newSettlement = {
+      id: Date.now().toString(),
+      title: `Settlement: ${targetMember.name}`,
+      amount,
+      payerPhone: targetMember.balance >= 0 ? 'self' : targetMember.phone,
+      date: new Date().toISOString(),
+      is_settlement: true,
+      splitMembers: targetMember.balance >= 0 ? [targetMember.phone] : ['self']
+    };
+
+    const updatedExpenses = [...selectedGroup.expenses, newSettlement];
+    const updatedMembers = recalculateBalances(selectedGroup.members, updatedExpenses);
+
+    await updateGroup(selectedGroup.id, { expenses: updatedExpenses, members: updatedMembers });
+    setSelectedGroup({ ...selectedGroup, expenses: updatedExpenses, members: updatedMembers });
     setSettleModal(null);
     setSettleAmount('');
   };
@@ -554,16 +613,52 @@ td{padding:12px;border-bottom:1px solid #F3F4F6;font-size:13px;}
                           
                           <Text style={styles.label}>Members</Text>
                           <ScrollView style={{ maxHeight: 200, marginBottom: 12 }}>
-                            {editMembers.map((m, i) => (
-                              <View key={i} style={styles.editMemberRow}>
-                                 <View style={styles.memberAvatar}><Text style={styles.memberAvatarText}>{m.name[0]}</Text></View>
-                                 <Text style={styles.memberName}>{m.name}</Text>
-                                 <TouchableOpacity onPress={() => handleRemoveMemberFromEdit(m.phone)}>
-                                   <Text style={{ color: COLORS.red, fontWeight: '700' }}>Remove</Text>
-                                 </TouchableOpacity>
-                              </View>
-                            ))}
-                          </ScrollView>
+                             {editMembers.map((m, i) => (
+                               <View key={i} style={[styles.editMemberRow, { flexDirection: 'column', alignItems: 'stretch', gap: 6, padding: 12 }]}>
+                                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                     <View style={styles.memberAvatar}><Text style={styles.memberAvatarText}>{m.name[0]}</Text></View>
+                                     <Text style={styles.memberName}>{m.name}</Text>
+                                     <TouchableOpacity onPress={() => handleRemoveMemberFromEdit(m.phone)}>
+                                       <Text style={{ color: COLORS.red, fontWeight: '700' }}>Remove</Text>
+                                     </TouchableOpacity>
+                                  </View>
+                                  <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+                                     <View style={{ flex: 1 }}>
+                                        <Text style={{ color: COLORS.textSecondary, fontSize: 10 }}>JOIN (YYYY-MM-DD)</Text>
+                                        <TextInput
+                                           style={[styles.input, { padding: 8, fontSize: 12, marginBottom: 0, marginTop: 4, height: 36 }]}
+                                           value={m.joined_at ? m.joined_at.split('T')[0] : ''}
+                                           placeholder="e.g. 2026-04-15"
+                                           placeholderTextColor={COLORS.textMuted}
+                                           onChangeText={(val) => {
+                                              const updated = [...editMembers];
+                                              try {
+                                                updated[i].joined_at = val ? new Date(val).toISOString() : new Date().toISOString();
+                                              } catch (e) {}
+                                              setEditMembers(updated);
+                                           }}
+                                        />
+                                     </View>
+                                     <View style={{ flex: 1 }}>
+                                        <Text style={{ color: COLORS.textSecondary, fontSize: 10 }}>LEAVE (YYYY-MM-DD)</Text>
+                                        <TextInput
+                                           style={[styles.input, { padding: 8, fontSize: 12, marginBottom: 0, marginTop: 4, height: 36 }]}
+                                           value={m.left_at ? m.left_at.split('T')[0] : ''}
+                                           placeholder="Active"
+                                           placeholderTextColor={COLORS.textMuted}
+                                           onChangeText={(val) => {
+                                              const updated = [...editMembers];
+                                              try {
+                                                updated[i].left_at = val ? new Date(val).toISOString() : null;
+                                              } catch (e) {}
+                                              setEditMembers(updated);
+                                           }}
+                                        />
+                                     </View>
+                                  </View>
+                               </View>
+                             ))}
+                           </ScrollView>
 
                           <TouchableOpacity style={styles.addBtn} onPress={() => setShowEditContacts(true)}>
                             <Text style={styles.addBtnText}>+ Add Member</Text>

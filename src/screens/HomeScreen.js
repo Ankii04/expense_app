@@ -11,6 +11,7 @@ import {
   formatCurrency, getCategoryById,
 } from '../utils/theme';
 import { useExpenses, useBudgets, useLends, useProfile } from '../hooks/useExpenses';
+import { useAuth } from '../store/AuthContext';
 import ExpenseCard from '../components/ExpenseCard';
 import { scheduleMonthlySummaryNotification } from '../utils/notifications';
 
@@ -30,6 +31,7 @@ const describeArc = (x, y, r, start, end) => {
 const SCREEN_W = Dimensions.get('window').width;
 
 export default function HomeScreen({ navigation }) {
+  const { logout } = useAuth();
   const { expenses = [], monthTotal = 0, categorySpend = {}, loading, refresh, addExpense } = useExpenses();
   const { budgets = {} } = useBudgets();
   const { contactSummaries = [] } = useLends();
@@ -384,6 +386,17 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.profileSaveText}>Save Changes</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity 
+              style={[styles.profileCancel, { borderColor: COLORS.red, borderWidth: 1, marginTop: 12, width: '100%', alignItems: 'center' }]} 
+              onPress={async () => {
+                setShowProfileModal(false);
+                await logout();
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={{ color: COLORS.red, fontWeight: '700', fontSize: 15 }}>Log Out</Text>
+            </TouchableOpacity>
 
           </View>
         </View>

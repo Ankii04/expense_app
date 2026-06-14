@@ -54,10 +54,40 @@ export default function ExpensesScreen() {
     const newMembers = members.map(m => ({ ...m, balance: 0, totalSpent: 0 }));
     expenses.forEach(exp => {
       const amount = Number(exp.amount);
-      
+      const expDate = new Date(exp.date);
+
+      const isMemberActive = (m) => {
+        if (!m.joined_at) return true;
+        const join = new Date(m.joined_at);
+        const leave = m.left_at ? new Date(m.left_at) : null;
+        return expDate >= join && (!leave || expDate <= leave);
+      };
+
+      if (exp.is_settlement) {
+        newMembers.forEach(m => {
+          if (m.phone === exp.payerPhone) {
+            m.balance += amount;
+          }
+          if (exp.payerPhone !== 'self' && m.phone === 'self') {
+            m.balance -= amount;
+          }
+          const recipientPhone = exp.splitMembers && exp.splitMembers.length > 0 ? exp.splitMembers[0] : null;
+          if (exp.payerPhone === 'self' && recipientPhone && m.phone === recipientPhone) {
+            m.balance -= amount;
+          }
+        });
+        return;
+      }
+
+      const activeMembers = newMembers.filter(isMemberActive);
+      if (activeMembers.length === 0) return;
+
+      const isPayerActive = activeMembers.some(m => m.phone === exp.payerPhone);
+
       if (exp.shares) {
         newMembers.forEach(m => {
-          const share = exp.shares[m.phone] || 0;
+          const isActive = isMemberActive(m);
+          const share = isActive ? (exp.shares[m.phone] || 0) : 0;
           if (m.phone === exp.payerPhone) {
             m.balance += (amount - share);
             m.totalSpent += amount;
@@ -66,30 +96,42 @@ export default function ExpensesScreen() {
           }
         });
       } else if (exp.splitMembers && exp.splitMembers.length > 0) {
-        const payerInSplit = exp.splitMembers.includes(exp.payerPhone);
-        const divisor = exp.splitMembers.length + (payerInSplit ? 0 : 1);
-        const perPerson = amount / divisor;
-        
+        const activeSplitPhones = exp.splitMembers.filter(phone => {
+          const m = newMembers.find(member => member.phone === phone);
+          return m && isMemberActive(m);
+        });
+        const payerInSplit = activeSplitPhones.includes(exp.payerPhone);
+        const divisor = activeSplitPhones.length + (payerInSplit ? 0 : (isPayerActive ? 1 : 0));
+        const perPerson = divisor > 0 ? (amount / divisor) : 0;
+
         newMembers.forEach(m => {
-          const isInSplit = exp.splitMembers.includes(m.phone);
+          const isInSplit = activeSplitPhones.includes(m.phone);
           const isPayer = m.phone === exp.payerPhone;
-          
-          if (isPayer) {
-            const payerShare = payerInSplit ? perPerson : 0;
-            m.balance += (amount - payerShare);
-            m.totalSpent += amount;
-          } else if (isInSplit) {
-            m.balance -= perPerson;
+          const isActive = isMemberActive(m);
+
+          if (isActive) {
+            if (isPayer) {
+              const payerShare = payerInSplit ? perPerson : 0;
+              m.balance += (amount - payerShare);
+              m.totalSpent += amount;
+            } else if (isInSplit) {
+              m.balance -= perPerson;
+            }
           }
         });
       } else {
-        const perPerson = amount / members.length;
+        const divisor = activeMembers.length;
+        const perPerson = divisor > 0 ? (amount / divisor) : 0;
+        
         newMembers.forEach(m => {
-          if (m.phone === exp.payerPhone) {
-            m.balance += (amount - perPerson);
-            m.totalSpent += amount;
-          } else {
-            m.balance -= perPerson;
+          const isActive = isMemberActive(m);
+          if (isActive) {
+            if (m.phone === exp.payerPhone) {
+              m.balance += (amount - perPerson);
+              m.totalSpent += amount;
+            } else {
+              m.balance -= perPerson;
+            }
           }
         });
       }

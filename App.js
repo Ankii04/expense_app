@@ -18,6 +18,7 @@ import AnalyticsScreen from './src/screens/AnalyticsScreen';
 import GroupsScreen from './src/screens/GroupsScreen';
 import CategoryScreen from './src/screens/CategoryScreen';
 import LendScreen from './src/screens/LendScreen';
+import CSVImportScreen from './src/screens/CSVImportScreen';
 
 import { requestNotificationPermissions } from './src/utils/notifications';
 
@@ -68,6 +69,7 @@ function MoreScreen({ navigation }) {
     { emoji: '🔄', label: 'Recurring Payments', route: 'Recurring', color: '#22D07A' },
     { emoji: '🏘️', label: 'Group Expenses', route: 'Groups', color: '#FFB547' },
     { emoji: '💰', label: 'Lend & Borrow', route: 'Lend', color: '#FF4D6A' },
+    { emoji: '📥', label: 'CSV Import & Audit', route: 'CSVImport', color: '#10B981' },
   ];
 
   return (
@@ -103,6 +105,7 @@ function MoreStack() {
       <Stack.Screen name="Recurring" component={RecurringScreen} />
       <Stack.Screen name="Groups" component={GroupsScreen} />
       <Stack.Screen name="Lend" component={LendScreen} />
+      <Stack.Screen name="CSVImport" component={CSVImportScreen} />
     </Stack.Navigator>
   );
 }
@@ -141,6 +144,52 @@ function TabNavigator() {
   );
 }
 
+import { AuthProvider, useAuth } from './src/store/AuthContext';
+import LoginScreen from './src/screens/LoginScreen';
+
+function AppContent() {
+  const { user, loading, login } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={{ flex: 1, backgroundColor: COLORS.background, justifyContent: 'center', alignItems: 'center' }}>
+        <Text style={{ color: '#fff', fontSize: 16 }}>Loading Spendify...</Text>
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer theme={AppTheme}>
+      <StatusBar style="light" />
+      <Stack.Navigator screenOptions={{ headerShown: false }}>
+        {!user ? (
+          <Stack.Screen name="Login">
+            {props => <LoginScreen {...props} onLoginSuccess={login} />}
+          </Stack.Screen>
+        ) : (
+          <>
+            <Stack.Screen name="Main" component={TabNavigator} />
+            <Stack.Screen
+              name="Pay"
+              component={PayScreen}
+              options={{ presentation: 'modal', gestureEnabled: true }}
+            />
+            <Stack.Screen
+              name="Category"
+              component={CategoryScreen}
+              options={{ presentation: 'modal', gestureEnabled: true }}
+            />
+            <Stack.Screen
+              name="LendMain"
+              component={LendScreen}
+            />
+          </>
+        )}
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
 // ─── Root App ────────────────────────────────────────────────────
 export default function App() {
   useEffect(() => {
@@ -151,28 +200,11 @@ export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
-        <View style={{ flex: 1, backgroundColor: COLORS.background }}>
-          <NavigationContainer theme={AppTheme}>
-            <StatusBar style="light" />
-            <Stack.Navigator screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="Main" component={TabNavigator} />
-              <Stack.Screen
-                name="Pay"
-                component={PayScreen}
-                options={{ presentation: 'modal', gestureEnabled: true }}
-              />
-              <Stack.Screen
-                name="Category"
-                component={CategoryScreen}
-                options={{ presentation: 'modal', gestureEnabled: true }}
-              />
-              <Stack.Screen
-                name="LendMain"
-                component={LendScreen}
-              />
-            </Stack.Navigator>
-          </NavigationContainer>
-        </View>
+        <AuthProvider>
+          <View style={{ flex: 1, backgroundColor: COLORS.background }}>
+            <AppContent />
+          </View>
+        </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

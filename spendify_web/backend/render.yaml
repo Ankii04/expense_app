@@ -1,0 +1,24 @@
+databases:
+  - name: spendify-db
+    databaseName: spendify
+    user: spendify_user
+    plan: free
+
+services:
+  - type: web
+    name: spendify-backend
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: spendify-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000

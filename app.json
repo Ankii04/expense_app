@@ -61,7 +61,8 @@
           "color": "#7C6AFF",
           "sounds": []
         }
-      ]
+      ],
+      "expo-sqlite"
     ],
     "owner": "ankiii04",
     "extra": {
