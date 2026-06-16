@@ -22,3 +22,5 @@ services:
         value: production
       - key: PORT
         value: 5000
+      - key: FRONTEND_URL
+        value: https://your-app-name.vercel.app  # ← Replace with your actual Vercel URL

@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     split_type VARCHAR(20) NOT NULL CHECK (split_type IN ('equal', 'exact', 'percentage', 'shares')),
     is_settlement BOOLEAN DEFAULT FALSE,
     imported_from_csv BOOLEAN DEFAULT FALSE,
+    category VARCHAR(50) DEFAULT 'other',
     created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
