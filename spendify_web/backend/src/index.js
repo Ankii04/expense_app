@@ -11,6 +11,7 @@ const importRouter = require('./routes/import');
 const budgetsRouter = require('./routes/budgets');
 const lendsRouter = require('./routes/lends');
 const recurringRouter = require('./routes/recurring');
+const runMigrations = require('./db/migrate');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -67,7 +68,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Listen on configured port
-app.listen(PORT, () => {
-  console.log(`🚀 Spendify backend server running on port ${PORT}`);
+// Run migrations then start server
+runMigrations().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🚀 Spendify backend server running on port ${PORT}`);
+  });
 });
